@@ -3,13 +3,10 @@ from pathlib import Path
 
 # Paths
 BASE_DIR = Path(__file__).resolve().parent
-DATABASE_PATH = BASE_DIR / "database" / "internship.db"
 
 # Database Configuration
-DATABASE_URL = f"sqlite:///{DATABASE_PATH}"
-
-# Ensure database directory exists
-DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
+# Local SQL connection: Database Name: internship, Table Name: internships, Host: localhost, no password
+DATABASE_URL = "mysql+pymysql://root@localhost/internship"
 
 # Scraper Settings
 REQUEST_TIMEOUT = 15  # seconds

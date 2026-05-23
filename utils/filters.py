@@ -43,20 +43,30 @@ def check_stipend_paid(stipend_text: str) -> tuple[bool, str]:
         
     text_lower = stipend_text.lower().strip()
     
-    # Non-paid indicators
-    unpaid_indicators = ["unpaid", "none", "no stipend", "nil", "zero", "0", "volunteer", "free"]
+    # First check for positive indicators like non-zero digits (e.g. ₹20,000, 10000, 500, etc.)
+    # to avoid false matches with unpaid indicators like "0".
+    has_non_zero_digits = any(char.isdigit() and char != '0' for char in text_lower)
+    if has_non_zero_digits:
+        return True, stipend_text.strip()
+        
+    # Non-paid indicators (excluding "0" as a simple substring since it matches any number with 0)
+    unpaid_indicators = ["unpaid", "none", "no stipend", "nil", "zero", "volunteer", "free"]
     for indicator in unpaid_indicators:
         if indicator in text_lower:
             return False, "Unpaid"
             
-    # Positive indicators (numbers or currency symbols)
-    has_digits = any(char.isdigit() for char in text_lower)
-    if has_digits:
-        return True, stipend_text.strip()
+    # Standalone '0' check
+    if re.search(r'\b0\b', text_lower):
+        return False, "Unpaid"
         
     # Standard text options
     if "paid" in text_lower or "performance based" in text_lower or "incentives" in text_lower:
         return True, stipend_text.strip()
+        
+    # If it contains digits (like "0" but nothing else)
+    has_digits = any(char.isdigit() for char in text_lower)
+    if has_digits:
+        return False, "Unpaid"
         
     return False, stipend_text.strip()
 

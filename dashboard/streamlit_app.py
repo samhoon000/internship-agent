@@ -9,7 +9,6 @@ import plotly.graph_objects as go
 # Append parent directory to system path for clean imports
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 
-from internship_agent.config import DATABASE_PATH
 from internship_agent.database.db import get_db_session, init_db, save_internships
 from internship_agent.database.models import Internship
 from internship_agent.scoring.legitimacy import get_legitimacy_bucket

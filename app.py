@@ -119,19 +119,27 @@ Commands to execute details:
         
     else:
         # Standard welcome menu
-        banner = """
+        banner = f"""
 ========================================================================
-             🤖 AI INTERNSHIP SCRAPER AGENT RUNNER Menu
+             [AI] AI INTERNSHIP SCRAPER AGENT RUNNER Menu
 ========================================================================
-Database initialized at: {}
-Log output directed to : {}
+Database: internship
+Table   : internships
+Host    : localhost
+Log file: {log_file.name}
 
 Please choose a command line option to proceed:
-  - Run scraper cycle once:  python app.py --run-now
-  - Launch daily scheduler:  python app.py --scheduler
-  - Launch web dashboard  :  streamlit run dashboard/streamlit_app.py
+
+- Run scraper cycle once:
+    python app.py --run-now
+
+- Launch daily scheduler:
+    python app.py --scheduler
+
+- Launch web dashboard:
+    streamlit run dashboard/streamlit_app.py
 ========================================================================
-        """.format(DATABASE_PATH, log_file)
+        """
         print(banner)
 
 if __name__ == "__main__":

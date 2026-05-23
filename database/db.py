@@ -8,8 +8,29 @@ from internship_agent.database.models import Base, Internship
 
 logger = logging.getLogger("internship_agent.database")
 
-# Setup SQLAlchemy engine and sessions
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+def create_database_if_not_exists():
+    """
+    Connects to the local SQL server and creates the database if it doesn't exist.
+    Avoids 1049 (Unknown database) errors by verifying connection boundaries.
+    """
+    try:
+        # Split URL to get server base connection and database name
+        # "mysql+pymysql://root@localhost/internship" -> "mysql+pymysql://root@localhost" and "internship"
+        base_url, db_name = DATABASE_URL.rsplit('/', 1)
+        temp_engine = create_engine(base_url)
+        with temp_engine.connect() as conn:
+            from sqlalchemy import text
+            conn.execute(text(f"CREATE DATABASE IF NOT EXISTS {db_name}"))
+        temp_engine.dispose()
+        logger.info(f"Database validation: Database '{db_name}' exists or was successfully created.")
+    except Exception as e:
+        logger.warning(f"Database validation: Auto-creation check failed (continuing to connect): {e}")
+
+# Validate database existence before creating main connection engine
+create_database_if_not_exists()
+
+# Setup SQLAlchemy engine and sessions (No SQLite leftovers)
+engine = create_engine(DATABASE_URL)
 session_factory = sessionmaker(bind=engine)
 Session = scoped_session(session_factory)
 

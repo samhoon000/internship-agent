@@ -7,19 +7,19 @@ Base = declarative_base()
 class Internship(Base):
     __tablename__ = 'internships'
     
-    # Using apply_link as the primary key perfectly matches your requested schema 
-    # columns without introducing an extra 'id' column.
-    apply_link = Column(String, primary_key=True, nullable=False)
+    # MySQL requires explicit VARCHAR lengths on all String columns.
+    # apply_link serves as the unique primary key matching the user's exact schema.
+    apply_link = Column(String(500), primary_key=True, nullable=False)
     
-    company_name = Column(String, nullable=False)
-    role = Column(String, nullable=False)
-    stipend = Column(String, nullable=True)
+    company_name = Column(String(255), nullable=False)
+    role = Column(String(255), nullable=False)
+    stipend = Column(String(100), nullable=True)
     paid = Column(Boolean, default=False, nullable=False)
-    location = Column(String, nullable=True)
+    location = Column(String(255), nullable=True)
     remote = Column(Boolean, default=False, nullable=False)
-    duration = Column(String, nullable=True)
-    skills = Column(String, nullable=True)  # Stored as comma-separated text
-    source = Column(String, nullable=False)
+    duration = Column(String(100), nullable=True)
+    skills = Column(String(500), nullable=True)  # Stored as comma-separated text
+    source = Column(String(100), nullable=False)
     legitimacy_score = Column(Integer, default=50, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
