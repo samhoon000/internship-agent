@@ -13,13 +13,35 @@ engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 session_factory = sessionmaker(bind=engine)
 Session = scoped_session(session_factory)
 
-def init_db():
-    """Initializes the SQLite database tables."""
+def test_connection() -> bool:
+    """
+    Tests the database connection to the local SQL database 'internship'.
+    Ensures the local SQL installation is accessible.
+    """
     try:
-        Base.metadata.create_all(engine)
-        logger.info("Database tables initialized successfully.")
+        from sqlalchemy import text
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        logger.info("Database connection test: SUCCESSFUL connection to local SQL database 'internship'.")
+        return True
     except Exception as e:
-        logger.error(f"Error initializing database: {e}", exc_info=True)
+        logger.error(f"Database connection test: FAILED. Local database is not running or connection failure: {e}", exc_info=True)
+        return False
+
+def init_db():
+    """
+    Initializes the local SQL database and tables automatically on startup.
+    Handles errors for connection issues or table creation failures.
+    """
+    try:
+        logger.info("Initiating database startup sequence...")
+        if not test_connection():
+            raise ConnectionError("Local database is not running or connection failure detected.")
+            
+        Base.metadata.create_all(engine)
+        logger.info("Database startup sequence: SUCCESSFUL. Table 'internships' created or verified successfully.")
+    except Exception as e:
+        logger.critical(f"Database startup sequence: FAILED. Error initializing tables: {e}", exc_info=True)
         raise e
 
 def is_similar(str1, str2, threshold=0.85):

@@ -3,7 +3,7 @@ from pathlib import Path
 
 # Paths
 BASE_DIR = Path(__file__).resolve().parent
-DATABASE_PATH = BASE_DIR / "database" / "internships.db"
+DATABASE_PATH = BASE_DIR / "database" / "internship.db"
 
 # Database Configuration
 DATABASE_URL = f"sqlite:///{DATABASE_PATH}"
