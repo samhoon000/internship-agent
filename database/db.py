@@ -81,11 +81,16 @@ def save_internships(internship_dicts):
     1. Checking for unique apply_link.
     2. Fuzzy matching company_name + role against existing records.
     Updates existing records if changes are detected.
+    Ensures SQL Insert Safety by rejecting low legitimacy or malformed rows.
     """
     session = get_db_session()
     saved_count = 0
     updated_count = 0
     skipped_count = 0
+    rejected_low_confidence = 0
+    rejected_malformed = 0
+
+    from internship_agent.config import MIN_LEGITIMACY_TO_KEEP
 
     try:
         # Load all existing internships into memory to avoid repeated queries in fuzzy matching
@@ -95,9 +100,18 @@ def save_internships(internship_dicts):
             apply_link = item.get('apply_link')
             company_name = item.get('company_name', '').strip()
             role = item.get('role', '').strip()
+            score = item.get('legitimacy_score', 0)
 
+            # Check critical fields (safety gate)
             if not apply_link or not company_name or not role:
-                logger.warning(f"Skipping malformed data item: {item}")
+                logger.warning(f"[SQL Insert Safety] Rejected malformed internship: {item}")
+                rejected_malformed += 1
+                continue
+
+            # Check legitimacy score (safety gate)
+            if score < MIN_LEGITIMACY_TO_KEEP:
+                logger.warning(f"[SQL Insert Safety] Rejected low confidence internship ({company_name} - {role}): score {score} < {MIN_LEGITIMACY_TO_KEEP}")
+                rejected_low_confidence += 1
                 continue
 
             # 1. Exact link check
@@ -167,7 +181,7 @@ def save_internships(internship_dicts):
                     duration=item.get('duration'),
                     skills=item.get('skills'),
                     source=item.get('source'),
-                    legitimacy_score=item.get('legitimacy_score', 50),
+                    legitimacy_score=score,
                     created_at=datetime.utcnow()
                 )
                 session.add(new_internship)
@@ -175,7 +189,7 @@ def save_internships(internship_dicts):
                 saved_count += 1
 
         session.commit()
-        logger.info(f"Database sync complete. Added: {saved_count}, Updated: {updated_count}, Unchanged/Skipped: {skipped_count}")
+        logger.info(f"Database sync complete. Added: {saved_count}, Updated: {updated_count}, Duplicates skipped: {skipped_count}, Rejected low-confidence: {rejected_low_confidence}, Rejected malformed: {rejected_malformed}")
         return saved_count, updated_count, skipped_count
 
     except Exception as e:
@@ -185,3 +199,4 @@ def save_internships(internship_dicts):
     finally:
         session.close()
         Session.remove()
+

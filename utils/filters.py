@@ -89,15 +89,16 @@ def check_remote(location_text: str) -> bool:
 def clean_internship(item: dict) -> dict:
     """
     Applies standardization and cleaning filters onto a raw scraped internship dictionary.
+    Does NOT inject fake defaults — missing data is left empty to be caught by the validation pipeline.
     """
     cleaned = item.copy()
     
-    # 1. Clean role and company name
-    cleaned['role'] = cleaned.get('role', 'Intern').strip()
-    cleaned['company_name'] = cleaned.get('company_name', 'Unknown Company').strip()
+    # 1. Clean role and company name (no fake defaults)
+    cleaned['role'] = cleaned.get('role', '').strip()
+    cleaned['company_name'] = cleaned.get('company_name', '').strip()
     
     # 2. Clean location & remote status
-    loc = cleaned.get('location', 'India').strip()
+    loc = cleaned.get('location', '').strip()
     cleaned['location'] = loc
     cleaned['remote'] = check_remote(loc) or cleaned.get('remote', False)
     
@@ -116,9 +117,9 @@ def clean_internship(item: dict) -> dict:
     else:
         cleaned['skills'] = "Not Specified"
         
-    # 5. Fallback fields
-    cleaned['duration'] = cleaned.get('duration', 'Not Specified').strip()
+    # 5. Default fields (no fake values — empty strings caught by validation)
+    cleaned['duration'] = cleaned.get('duration', '').strip() or "Not Specified"
     cleaned['apply_link'] = cleaned.get('apply_link', '').strip()
-    cleaned['source'] = cleaned.get('source', 'Unknown').strip()
+    cleaned['source'] = cleaned.get('source', '').strip()
     
     return cleaned

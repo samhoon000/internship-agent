@@ -9,3 +9,4 @@ streamlit
 apscheduler
 python-dotenv
 lxml
+plotly

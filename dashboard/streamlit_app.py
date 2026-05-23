@@ -113,7 +113,7 @@ else:
 selected_sources = st.sidebar.multiselect("🌐 Data Sources", options=all_sources, default=all_sources)
 
 # 5. Legitimacy Slider
-min_legit_score = st.sidebar.slider("🛡️ Min Legitimacy Score", min_value=0, max_value=100, value=40)
+min_legit_score = st.sidebar.slider("🛡️ Min Legitimacy Score", min_value=0, max_value=100, value=60)
 
 # Apply Filter logic
 if not df.empty:
@@ -201,8 +201,8 @@ if st.sidebar.button("🚀 Run Discovery Scrapers Now", use_container_width=True
         
         scrapers = [
             (InternshalaScraper(), 25, "Running Internshala module..."),
-            (WellfoundScraper(), 50, "Running Wellfound module (Live & Fallback)..."),
-            (YCJobsScraper(), 75, "Running YC Jobs module (Live & Fallback)..."),
+            (WellfoundScraper(), 50, "Running Wellfound module..."),
+            (YCJobsScraper(), 75, "Running YC Jobs module..."),
             (IndeedScraper(), 100, "Running Indeed India module...")
         ]
         
@@ -337,10 +337,11 @@ with tab2:
                 title='Legitimacy Scores Breakdown',
                 color='Category',
                 color_discrete_map={
-                    "Highly Legit": "#10B981",
-                    "Good": "#3B82F6",
+                    "Excellent": "#10B981",
+                    "High Confidence": "#3B82F6",
+                    "Good": "#6C63FF",
                     "Risky": "#F59E0B",
-                    "Avoid": "#EF4444"
+                    "Reject": "#EF4444"
                 }
             )
             fig_legit.update_layout(template="plotly_dark" if st.get_option("theme.base") == "dark" else "plotly_white")

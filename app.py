@@ -13,7 +13,7 @@ from internship_agent.scrapers.wellfound import WellfoundScraper
 from internship_agent.scrapers.yc_jobs import YCJobsScraper
 from internship_agent.scrapers.indeed import IndeedScraper
 
-# Configure premium double-pipeline logging (stdout + file)
+# Configure robust production logging (stdout + file)
 log_file = Path(__file__).resolve().parent / "internship_agent.log"
 logging.basicConfig(
     level=logging.INFO,
@@ -26,7 +26,7 @@ logging.basicConfig(
 logger = logging.getLogger("internship_agent.app")
 
 def run_agent_cycle():
-    """Runs a single iteration of all scraper modules."""
+    """Runs a single iteration of all scraper modules and logs consolidated metrics."""
     logger.info("=== Starting AI Internship Discovery Cycle ===")
     
     scrapers = [
@@ -47,14 +47,36 @@ def run_agent_cycle():
         except Exception as e:
             logger.error(f"Scraper failed: {scraper.source_name}. Reason: {e}", exc_info=True)
             
-    logger.info(f"Total entries scraped from all platforms: {len(all_scraped_items)}")
+    # Calculate consolidated production metrics
+    total_scraped = sum(s.scraped_count for s in scrapers)
+    total_suspicious = sum(s.rejected_suspicious + s.score_below_threshold for s in scrapers)
+    total_broken = sum(s.broken_urls for s in scrapers)
+    blocked_sources = sum(1 for s in scrapers if s.blocked)
+    
     logger.info("Saving results to SQL database and applying deduplication...")
     
     # Save to database
     added, updated, skipped = save_internships(all_scraped_items)
     
+    # print and log production metrics exactly as requested
+    metrics_report = f"""
+========================================================
+PRODUCTION METRICS REPORT
+========================================================
+Real internships scraped: {total_scraped}
+Rejected suspicious internships: {total_suspicious}
+Broken URLs rejected: {total_broken}
+Blocked sources: {blocked_sources}
+Duplicates skipped: {skipped}
+Inserted into SQL: {added}
+========================================================
+"""
+    logger.info(metrics_report)
+    print(metrics_report)
+    
     logger.info(f"=== Cycle Finished. Added: {added}, Updated: {updated}, Unchanged/Skipped: {skipped} ===")
     return added, updated, skipped
+
 
 def start_scheduler():
     """Initializes and blocks on the background scheduler to run the agent daily."""
