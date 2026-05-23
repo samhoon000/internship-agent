@@ -6,7 +6,7 @@ BASE_DIR = Path(__file__).resolve().parent
 
 # Database Configuration
 # Local SQL connection: Database Name: internship, Table Name: internships, Host: localhost, no password
-DATABASE_URL = "mysql+pymysql://root@localhost/internship"
+DATABASE_URL = "mysql+pymysql://root:@localhost/internship"
 
 # Scraper Settings
 REQUEST_TIMEOUT = 15  # seconds

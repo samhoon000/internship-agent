@@ -10,54 +10,53 @@ logger = logging.getLogger("internship_agent.database")
 
 def create_database_if_not_exists():
     """
-    Connects to the local SQL server and creates the database if it doesn't exist.
-    Avoids 1049 (Unknown database) errors by verifying connection boundaries.
+    Connects to the local MySQL server and creates the database if it doesn't exist.
     """
     try:
         # Split URL to get server base connection and database name
-        # "mysql+pymysql://root@localhost/internship" -> "mysql+pymysql://root@localhost" and "internship"
+        # "mysql+pymysql://root:@localhost/internship" -> "mysql+pymysql://root:@localhost" and "internship"
         base_url, db_name = DATABASE_URL.rsplit('/', 1)
-        temp_engine = create_engine(base_url)
+        temp_engine = create_engine(base_url, pool_pre_ping=True)
         with temp_engine.connect() as conn:
             from sqlalchemy import text
             conn.execute(text(f"CREATE DATABASE IF NOT EXISTS {db_name}"))
         temp_engine.dispose()
-        logger.info(f"Database validation: Database '{db_name}' exists or was successfully created.")
+        logger.info(f"Database validation: Database '{db_name}' exists or was successfully verified/created.")
     except Exception as e:
         logger.warning(f"Database validation: Auto-creation check failed (continuing to connect): {e}")
 
 # Validate database existence before creating main connection engine
 create_database_if_not_exists()
 
-# Setup SQLAlchemy engine and sessions (No SQLite leftovers)
-engine = create_engine(DATABASE_URL)
+# Setup SQLAlchemy engine and sessions with pool_pre_ping enabled
+engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 session_factory = sessionmaker(bind=engine)
 Session = scoped_session(session_factory)
 
 def test_connection() -> bool:
     """
-    Tests the database connection to the local SQL database 'internship'.
-    Ensures the local SQL installation is accessible.
+    Tests the database connection to the local MySQL database 'internship'.
+    Ensures the local MySQL installation is accessible.
     """
     try:
         from sqlalchemy import text
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
-        logger.info("Database connection test: SUCCESSFUL connection to local SQL database 'internship'.")
+        logger.info("Successfully connected to MySQL database: internship")
         return True
     except Exception as e:
-        logger.error(f"Database connection test: FAILED. Local database is not running or connection failure: {e}", exc_info=True)
+        logger.error("Could not connect to MySQL at localhost:3306", exc_info=True)
         return False
 
 def init_db():
     """
-    Initializes the local SQL database and tables automatically on startup.
+    Initializes the local MySQL database and tables automatically on startup.
     Handles errors for connection issues or table creation failures.
     """
     try:
         logger.info("Initiating database startup sequence...")
         if not test_connection():
-            raise ConnectionError("Local database is not running or connection failure detected.")
+            raise ConnectionError("Could not connect to MySQL at localhost:3306")
             
         Base.metadata.create_all(engine)
         logger.info("Database startup sequence: SUCCESSFUL. Table 'internships' created or verified successfully.")

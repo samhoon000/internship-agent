@@ -119,14 +119,13 @@ Commands to execute details:
         
     else:
         # Standard welcome menu
-        banner = f"""
-========================================================================
-             [AI] AI INTERNSHIP SCRAPER AGENT RUNNER Menu
+        banner = f"""========================================================================
+🤖 AI INTERNSHIP SCRAPER AGENT RUNNER Menu
 ========================================================================
 Database: internship
 Table   : internships
 Host    : localhost
-Log file: {log_file.name}
+Log file: {log_file}
 
 Please choose a command line option to proceed:
 
@@ -138,9 +137,11 @@ Please choose a command line option to proceed:
 
 - Launch web dashboard:
     streamlit run dashboard/streamlit_app.py
-========================================================================
-        """
-        print(banner)
+========================================================================\n"""
+        try:
+            print(banner)
+        except UnicodeEncodeError:
+            print(banner.replace("🤖", "[AI]"))
 
 if __name__ == "__main__":
     main()
