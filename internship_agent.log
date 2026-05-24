@@ -693,3 +693,155 @@ Inserted into SQL: 12
 ========================================================
 
 2026-05-23 19:39:53,393 [INFO] internship_agent.app: === Cycle Finished. Added: 12, Updated: 1, Unchanged/Skipped: 1 ===
+2026-05-24 18:05:28,216 [INFO] internship_agent.database: Initiating database startup sequence...
+2026-05-24 18:05:28,281 [INFO] internship_agent.database: Successfully connected to MySQL database: internship
+2026-05-24 18:05:28,341 [INFO] internship_agent.database: Database startup sequence: SUCCESSFUL. Table 'internships' created or verified successfully.
+2026-05-24 18:05:28,341 [INFO] internship_agent.app: Manual execution triggered via --run-now flag.
+2026-05-24 18:05:28,341 [INFO] internship_agent.app: === Starting AI Internship Discovery Cycle ===
+2026-05-24 18:05:28,342 [INFO] internship_agent.app: Triggering Internshala scraping sequence...
+2026-05-24 18:05:28,342 [INFO] internship_agent.scrapers.base: [Internshala] Initiating live scraping process...
+2026-05-24 18:05:28,342 [INFO] internship_agent.scrapers.internshala: [Internshala] Scraping page 1: https://internshala.com/internships/keywords-python,data-science,machine-learning,ai,backend,software-engineer,react,javascript,node-js/page-1/
+2026-05-24 18:05:28,343 [INFO] internship_agent.scrapers.internshala: [Internshala] Waiting 3.69s before request (anti-bot delay)...
+2026-05-24 18:05:32,035 [INFO] internship_agent.scrapers.internshala: [Internshala] Fetching URL (Attempt 1/3): https://internshala.com/internships/keywords-python,data-science,machine-learning,ai,backend,software-engineer,react,javascript,node-js/page-1/
+2026-05-24 18:05:35,078 [INFO] internship_agent.scrapers.internshala: [Internshala] Scraping page 2: https://internshala.com/internships/keywords-python,data-science,machine-learning,ai,backend,software-engineer,react,javascript,node-js/page-2/
+2026-05-24 18:05:35,079 [INFO] internship_agent.scrapers.internshala: [Internshala] Waiting 5.82s before request (anti-bot delay)...
+2026-05-24 18:05:40,904 [INFO] internship_agent.scrapers.internshala: [Internshala] Fetching URL (Attempt 1/3): https://internshala.com/internships/keywords-python,data-science,machine-learning,ai,backend,software-engineer,react,javascript,node-js/page-2/
+2026-05-24 18:05:41,865 [INFO] internship_agent.scrapers.internshala: [Internshala] Scraping page 3: https://internshala.com/internships/keywords-python,data-science,machine-learning,ai,backend,software-engineer,react,javascript,node-js/page-3/
+2026-05-24 18:05:41,866 [INFO] internship_agent.scrapers.internshala: [Internshala] Waiting 4.97s before request (anti-bot delay)...
+2026-05-24 18:05:46,841 [INFO] internship_agent.scrapers.internshala: [Internshala] Fetching URL (Attempt 1/3): https://internshala.com/internships/keywords-python,data-science,machine-learning,ai,backend,software-engineer,react,javascript,node-js/page-3/
+2026-05-24 18:05:48,123 [WARNING] internship_agent.scrapers.base: [Internshala] Live scraper returned 0 items. No internships retrieved.
+2026-05-24 18:05:48,157 [INFO] internship_agent.app: Internshala successfully yielded 0 items.
+2026-05-24 18:05:48,194 [INFO] internship_agent.app: Triggering Wellfound scraping sequence...
+2026-05-24 18:05:48,225 [INFO] internship_agent.scrapers.base: [Wellfound] Initiating live scraping process...
+2026-05-24 18:05:48,226 [INFO] internship_agent.scrapers.wellfound: [Wellfound] Launching Playwright to scrape: https://wellfound.com/role/l/software-engineer-internship
+2026-05-24 18:05:50,819 [INFO] internship_agent.scrapers.wellfound: [Wellfound] Navigating to https://wellfound.com/role/l/software-engineer-internship...
+2026-05-24 18:05:59,545 [INFO] internship_agent.scrapers.wellfound: [Wellfound] Simulating human scroll loading...
+2026-05-24 18:06:14,345 [WARNING] internship_agent.scrapers.wellfound: [Wellfound] Selector '[data-test="JobSearchResultCard"]' or '.styles_jobCard__' not found. Page might have blocked requests or structure changed.
+2026-05-24 18:06:14,387 [INFO] internship_agent.scrapers.wellfound: [Wellfound] Found 0 job cards in rendered DOM.
+2026-05-24 18:06:14,864 [WARNING] internship_agent.scrapers.base: [Wellfound] Live scraper returned 0 items. No internships retrieved.
+2026-05-24 18:06:14,864 [INFO] internship_agent.app: Wellfound successfully yielded 0 items.
+2026-05-24 18:06:14,865 [INFO] internship_agent.app: Triggering YC Jobs scraping sequence...
+2026-05-24 18:06:14,865 [INFO] internship_agent.scrapers.base: [YC Jobs] Initiating live scraping process...
+2026-05-24 18:06:14,866 [INFO] internship_agent.scrapers.yc_jobs: [YC Jobs] Launching Playwright to scrape: https://www.workatastartup.com/jobs?demands_remote=any&job_types[]=internship
+2026-05-24 18:06:16,127 [INFO] internship_agent.scrapers.yc_jobs: [YC Jobs] Navigating to https://www.workatastartup.com/jobs?demands_remote=any&job_types[]=internship...
+2026-05-24 18:06:24,129 [INFO] internship_agent.scrapers.yc_jobs: [YC Jobs] Simulating human scroll loading...
+2026-05-24 18:06:40,029 [WARNING] internship_agent.scrapers.yc_jobs: [YC Jobs] Selector '.job-card' or '.job-listing' not found. Page might have blocked requests or structure changed.
+2026-05-24 18:06:40,350 [INFO] internship_agent.scrapers.yc_jobs: [YC Jobs] Found 0 job cards in rendered DOM.
+2026-05-24 18:06:40,956 [WARNING] internship_agent.scrapers.base: [YC Jobs] Live scraper returned 0 items. No internships retrieved.
+2026-05-24 18:06:40,957 [INFO] internship_agent.app: YC Jobs successfully yielded 0 items.
+2026-05-24 18:06:40,957 [INFO] internship_agent.app: Triggering Indeed India scraping sequence...
+2026-05-24 18:06:40,957 [INFO] internship_agent.scrapers.base: [Indeed India] Initiating live scraping process...
+2026-05-24 18:06:40,958 [INFO] internship_agent.scrapers.indeed: [Indeed India] Launching Playwright to scrape.
+2026-05-24 18:06:42,517 [INFO] internship_agent.scrapers.indeed: [Indeed India] Navigating to page 1: https://in.indeed.com/jobs?q=python+internship&l=India&start=0
+2026-05-24 18:06:53,507 [INFO] internship_agent.scrapers.indeed: [Indeed India] Simulating human scroll on page 1...
+2026-05-24 18:06:56,257 [INFO] internship_agent.scrapers.indeed: [Indeed India] Found 16 job cards on page 1.
+2026-05-24 18:06:56,277 [INFO] internship_agent.scrapers.indeed: [Indeed India] Navigating to page 2: https://in.indeed.com/jobs?q=python+internship&l=India&start=10
+2026-05-24 18:07:13,849 [ERROR] internship_agent.scrapers.indeed: [Indeed India] Navigation failed for page 2: Target page, context or browser has been closed
+2026-05-24 18:07:13,850 [INFO] internship_agent.scrapers.indeed: [Indeed India] Navigating to page 3: https://in.indeed.com/jobs?q=python+internship&l=India&start=20
+2026-05-24 18:07:13,855 [ERROR] internship_agent.scrapers.indeed: [Indeed India] Navigation failed for page 3: Page.goto: Target page, context or browser has been closed
+2026-05-24 18:07:21,779 [WARNING] internship_agent.scrapers.base: [Indeed India] Internship at 'GJ-Map Solutions' failed validation pipeline:
+2026-05-24 18:07:21,780 [WARNING] internship_agent.scrapers.base:   - [PAYMENT] internship appears unpaid (paid=False, stipend='Unspecified')
+2026-05-24 18:07:28,131 [WARNING] internship_agent.scrapers.base: [Indeed India] Internship at 'Adsquaretech Solutions' failed validation pipeline:
+2026-05-24 18:07:28,132 [WARNING] internship_agent.scrapers.base:   - [COMPANY] company_name matches suspicious pattern: 'tech solutions' in 'Adsquaretech Solutions'
+2026-05-24 18:07:29,747 [INFO] internship_agent.scrapers.base: [Indeed India] --- Scraping Run Summary ---
+2026-05-24 18:07:29,748 [INFO] internship_agent.scrapers.base: [Indeed India] Real internships scraped: 16
+2026-05-24 18:07:29,748 [INFO] internship_agent.scrapers.base: [Indeed India] Rejected non-tech roles: 0
+2026-05-24 18:07:29,749 [INFO] internship_agent.scrapers.base: [Indeed India] Rejected suspicious/invalid companies: 1
+2026-05-24 18:07:29,749 [INFO] internship_agent.scrapers.base: [Indeed India] Rejected unpaid/commission opportunities: 1
+2026-05-24 18:07:29,750 [INFO] internship_agent.scrapers.base: [Indeed India] Broken/invalid URLs rejected: 0
+2026-05-24 18:07:29,750 [INFO] internship_agent.scrapers.base: [Indeed India] Missing critical fields: 0
+2026-05-24 18:07:29,751 [INFO] internship_agent.scrapers.base: [Indeed India] Rejected with low confidence (score < 60): 0
+2026-05-24 18:07:29,751 [INFO] internship_agent.scrapers.base: [Indeed India] Passed all gates & ready for SQL: 14
+2026-05-24 18:07:29,752 [WARNING] internship_agent.scrapers.base: [Indeed India] QA WARNING: Potential synthetic data issue. Highly repetitive patterns detected. (Most common company makes up 14.3%, role 21.4%, skills 100.0%)
+2026-05-24 18:07:29,753 [INFO] internship_agent.app: Indeed India successfully yielded 14 items.
+2026-05-24 18:07:29,754 [INFO] internship_agent.app: Saving results to SQL database and applying deduplication...
+2026-05-24 18:07:29,902 [INFO] internship_agent.database: Database sync complete. Added: 2, Updated: 2, Duplicates skipped: 10, Rejected low-confidence: 0, Rejected malformed: 0
+2026-05-24 18:07:29,903 [INFO] internship_agent.app: 
+========================================================
+PRODUCTION METRICS REPORT
+========================================================
+Real internships scraped: 16
+Rejected suspicious internships: 1
+Broken URLs rejected: 0
+Blocked sources: 3
+Duplicates skipped: 10
+Inserted into SQL: 2
+========================================================
+
+2026-05-24 18:07:29,904 [INFO] internship_agent.app: === Cycle Finished. Added: 2, Updated: 2, Unchanged/Skipped: 10 ===
+2026-05-24 18:13:31,031 [INFO] internship_agent.database: Initiating database startup sequence...
+2026-05-24 18:13:31,100 [INFO] internship_agent.database: Successfully connected to MySQL database: internship
+2026-05-24 18:13:31,162 [INFO] internship_agent.database: Database startup sequence: SUCCESSFUL. Table 'internships' created or verified successfully.
+2026-05-24 18:13:31,163 [INFO] internship_agent.app: Manual execution triggered via --run-now flag.
+2026-05-24 18:13:31,163 [INFO] internship_agent.app: === Starting AI Internship Discovery Cycle ===
+2026-05-24 18:13:31,164 [INFO] internship_agent.app: Triggering Internshala scraping sequence...
+2026-05-24 18:13:31,164 [INFO] internship_agent.scrapers.base: [Internshala] Initiating live scraping process...
+2026-05-24 18:13:31,164 [INFO] internship_agent.scrapers.internshala: [Internshala] Scraping page 1: https://internshala.com/internships/keywords-python,data-science,machine-learning,ai,backend,software-engineer,react,javascript,node-js/page-1/
+2026-05-24 18:13:31,165 [INFO] internship_agent.scrapers.internshala: [Internshala] Waiting 4.08s before request (anti-bot delay)...
+2026-05-24 18:13:35,246 [INFO] internship_agent.scrapers.internshala: [Internshala] Fetching URL (Attempt 1/3): https://internshala.com/internships/keywords-python,data-science,machine-learning,ai,backend,software-engineer,react,javascript,node-js/page-1/
+2026-05-24 18:13:37,243 [INFO] internship_agent.scrapers.internshala: [Internshala] Scraping page 2: https://internshala.com/internships/keywords-python,data-science,machine-learning,ai,backend,software-engineer,react,javascript,node-js/page-2/
+2026-05-24 18:13:37,244 [INFO] internship_agent.scrapers.internshala: [Internshala] Waiting 2.78s before request (anti-bot delay)...
+2026-05-24 18:13:40,023 [INFO] internship_agent.scrapers.internshala: [Internshala] Fetching URL (Attempt 1/3): https://internshala.com/internships/keywords-python,data-science,machine-learning,ai,backend,software-engineer,react,javascript,node-js/page-2/
+2026-05-24 18:13:40,978 [INFO] internship_agent.scrapers.internshala: [Internshala] Scraping page 3: https://internshala.com/internships/keywords-python,data-science,machine-learning,ai,backend,software-engineer,react,javascript,node-js/page-3/
+2026-05-24 18:13:40,978 [INFO] internship_agent.scrapers.internshala: [Internshala] Waiting 2.67s before request (anti-bot delay)...
+2026-05-24 18:13:43,645 [INFO] internship_agent.scrapers.internshala: [Internshala] Fetching URL (Attempt 1/3): https://internshala.com/internships/keywords-python,data-science,machine-learning,ai,backend,software-engineer,react,javascript,node-js/page-3/
+2026-05-24 18:13:44,563 [WARNING] internship_agent.scrapers.base: [Internshala] Live scraper returned 0 items. No internships retrieved.
+2026-05-24 18:13:44,564 [INFO] internship_agent.app: Internshala successfully yielded 0 items.
+2026-05-24 18:13:44,564 [INFO] internship_agent.app: Triggering Wellfound scraping sequence...
+2026-05-24 18:13:44,564 [INFO] internship_agent.scrapers.base: [Wellfound] Initiating live scraping process...
+2026-05-24 18:13:44,565 [INFO] internship_agent.scrapers.wellfound: [Wellfound] Launching Playwright to scrape: https://wellfound.com/role/l/software-engineer-internship
+2026-05-24 18:13:46,921 [INFO] internship_agent.scrapers.wellfound: [Wellfound] Navigating to https://wellfound.com/role/l/software-engineer-internship...
+2026-05-24 18:13:57,824 [INFO] internship_agent.scrapers.wellfound: [Wellfound] Simulating human scroll loading...
+2026-05-24 18:14:12,181 [WARNING] internship_agent.scrapers.wellfound: [Wellfound] Selector '[data-test="JobSearchResultCard"]' or '.styles_jobCard__' not found. Page might have blocked requests or structure changed.
+2026-05-24 18:14:12,265 [INFO] internship_agent.scrapers.wellfound: [Wellfound] Found 0 job cards in rendered DOM.
+2026-05-24 18:14:12,731 [WARNING] internship_agent.scrapers.base: [Wellfound] Live scraper returned 0 items. No internships retrieved.
+2026-05-24 18:14:12,731 [INFO] internship_agent.app: Wellfound successfully yielded 0 items.
+2026-05-24 18:14:12,732 [INFO] internship_agent.app: Triggering YC Jobs scraping sequence...
+2026-05-24 18:14:12,732 [INFO] internship_agent.scrapers.base: [YC Jobs] Initiating live scraping process...
+2026-05-24 18:14:12,732 [INFO] internship_agent.scrapers.yc_jobs: [YC Jobs] Launching Playwright to scrape: https://www.workatastartup.com/jobs?demands_remote=any&job_types[]=internship
+2026-05-24 18:14:14,118 [INFO] internship_agent.scrapers.yc_jobs: [YC Jobs] Navigating to https://www.workatastartup.com/jobs?demands_remote=any&job_types[]=internship...
+2026-05-24 18:14:23,568 [INFO] internship_agent.scrapers.yc_jobs: [YC Jobs] Simulating human scroll loading...
+2026-05-24 18:14:38,659 [WARNING] internship_agent.scrapers.yc_jobs: [YC Jobs] Selector '.job-card' or '.job-listing' not found. Page might have blocked requests or structure changed.
+2026-05-24 18:14:38,860 [INFO] internship_agent.scrapers.yc_jobs: [YC Jobs] Found 0 job cards in rendered DOM.
+2026-05-24 18:14:39,532 [WARNING] internship_agent.scrapers.base: [YC Jobs] Live scraper returned 0 items. No internships retrieved.
+2026-05-24 18:14:39,533 [INFO] internship_agent.app: YC Jobs successfully yielded 0 items.
+2026-05-24 18:14:39,533 [INFO] internship_agent.app: Triggering Indeed India scraping sequence...
+2026-05-24 18:14:39,534 [INFO] internship_agent.scrapers.base: [Indeed India] Initiating live scraping process...
+2026-05-24 18:14:39,534 [INFO] internship_agent.scrapers.indeed: [Indeed India] Launching Playwright to scrape.
+2026-05-24 18:14:41,064 [INFO] internship_agent.scrapers.indeed: [Indeed India] Navigating to page 1: https://in.indeed.com/jobs?q=python+internship&l=India&start=0
+2026-05-24 18:14:53,185 [INFO] internship_agent.scrapers.indeed: [Indeed India] Simulating human scroll on page 1...
+2026-05-24 18:14:56,705 [INFO] internship_agent.scrapers.indeed: [Indeed India] Found 16 job cards on page 1.
+2026-05-24 18:14:56,760 [INFO] internship_agent.scrapers.indeed: [Indeed India] Navigating to page 2: https://in.indeed.com/jobs?q=python+internship&l=India&start=10
+2026-05-24 18:15:28,713 [ERROR] internship_agent.scrapers.indeed: [Indeed India] Navigation failed for page 2: Timeout 30000ms exceeded.
+2026-05-24 18:15:28,714 [INFO] internship_agent.scrapers.indeed: [Indeed India] Navigating to page 3: https://in.indeed.com/jobs?q=python+internship&l=India&start=20
+2026-05-24 18:16:00,146 [ERROR] internship_agent.scrapers.indeed: [Indeed India] Navigation failed for page 3: Timeout 30000ms exceeded.
+2026-05-24 18:16:06,299 [WARNING] internship_agent.scrapers.base: [Indeed India] Internship at 'GJ-Map Solutions' failed validation pipeline:
+2026-05-24 18:16:06,300 [WARNING] internship_agent.scrapers.base:   - [PAYMENT] internship appears unpaid (paid=False, stipend='Unspecified')
+2026-05-24 18:16:11,296 [WARNING] internship_agent.scrapers.base: [Indeed India] Internship at 'Adsquaretech Solutions' failed validation pipeline:
+2026-05-24 18:16:11,297 [WARNING] internship_agent.scrapers.base:   - [COMPANY] company_name matches suspicious pattern: 'tech solutions' in 'Adsquaretech Solutions'
+2026-05-24 18:16:12,732 [INFO] internship_agent.scrapers.base: [Indeed India] --- Scraping Run Summary ---
+2026-05-24 18:16:12,733 [INFO] internship_agent.scrapers.base: [Indeed India] Real internships scraped: 16
+2026-05-24 18:16:12,733 [INFO] internship_agent.scrapers.base: [Indeed India] Rejected non-tech roles: 0
+2026-05-24 18:16:12,734 [INFO] internship_agent.scrapers.base: [Indeed India] Rejected suspicious/invalid companies: 1
+2026-05-24 18:16:12,735 [INFO] internship_agent.scrapers.base: [Indeed India] Rejected unpaid/commission opportunities: 1
+2026-05-24 18:16:12,735 [INFO] internship_agent.scrapers.base: [Indeed India] Broken/invalid URLs rejected: 0
+2026-05-24 18:16:12,736 [INFO] internship_agent.scrapers.base: [Indeed India] Missing critical fields: 0
+2026-05-24 18:16:12,736 [INFO] internship_agent.scrapers.base: [Indeed India] Rejected with low confidence (score < 60): 0
+2026-05-24 18:16:12,737 [INFO] internship_agent.scrapers.base: [Indeed India] Passed all gates & ready for SQL: 14
+2026-05-24 18:16:12,738 [WARNING] internship_agent.scrapers.base: [Indeed India] QA WARNING: Potential synthetic data issue. Highly repetitive patterns detected. (Most common company makes up 14.3%, role 21.4%, skills 100.0%)
+2026-05-24 18:16:12,738 [INFO] internship_agent.app: Indeed India successfully yielded 14 items.
+2026-05-24 18:16:12,739 [INFO] internship_agent.app: Saving results to SQL database and applying deduplication...
+2026-05-24 18:16:12,828 [INFO] internship_agent.database: Database sync complete. Added: 0, Updated: 2, Duplicates skipped: 12, Rejected low-confidence: 0, Rejected malformed: 0
+2026-05-24 18:16:12,828 [INFO] internship_agent.app: 
+========================================================
+PRODUCTION METRICS REPORT
+========================================================
+Real internships scraped: 16
+Rejected suspicious internships: 1
+Broken URLs rejected: 0
+Blocked sources: 3
+Duplicates skipped: 12
+Inserted into SQL: 0
+========================================================
+
+2026-05-24 18:16:12,829 [INFO] internship_agent.app: === Cycle Finished. Added: 0, Updated: 2, Unchanged/Skipped: 12 ===
