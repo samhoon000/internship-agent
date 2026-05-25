@@ -18,7 +18,7 @@ import re
 import logging
 import socket
 
-from internship_agent.config import SUSPICIOUS_COMPANY_PATTERNS, TECH_KEYWORDS
+from internship_agent.config import SUSPICIOUS_COMPANY_PATTERNS, BOOST_SKILLS
 
 logger = logging.getLogger("internship_agent.scoring.legitimacy")
 
@@ -96,7 +96,7 @@ def calculate_legitimacy_score(item: dict) -> int:
 
     # ── 5. TECH SKILLS MATCH (+10) ────────────────────────────────
     tech_match = False
-    for kw in TECH_KEYWORDS:
+    for kw in BOOST_SKILLS:
         if kw in skills or kw in role:
             tech_match = True
             break

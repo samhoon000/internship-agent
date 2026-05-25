@@ -23,6 +23,8 @@ from internship_agent.config import (
     SOURCE_DOMAIN_MAP,
     SUSPICIOUS_COMPANY_PATTERNS,
     TECH_KEYWORDS,
+    STRONG_TECH_KEYWORDS,
+    PARTIAL_TECH_KEYWORDS,
     EXCLUDE_KEYWORDS,
     REQUEST_TIMEOUT,
 )
@@ -176,38 +178,72 @@ def _check_dns(domain: str) -> bool:
 
 def validate_role_quality(role: str) -> tuple[bool, str]:
     """
-    Ensures the role is a legitimate tech internship.
-    Rejects non-tech roles (HR, Marketing, Sales, Campus Ambassador, etc.)
+    Ensures the role is a legitimate tech internship using weighted scoring.
     """
     if not role or not role.strip():
         return False, "role is empty"
 
     role_lower = role.strip().lower()
+    score = 0
+    matched_exclude = []
+    matched_strong = []
+    matched_partial = []
 
-    # Check exclusion keywords first
+    def matches_keyword(keyword: str, text: str) -> bool:
+        if len(keyword) <= 3 and keyword.isalnum():
+            pattern = rf"\b{re.escape(keyword)}\b"
+            return bool(re.search(pattern, text))
+        return keyword in text
+
+    # 1. Scan for excluded keywords (each match subtracts 25 points)
     for word in EXCLUDE_KEYWORDS:
-        if word in role_lower:
-            return False, f"role '{role}' contains excluded keyword: '{word}'"
+        if matches_keyword(word, role_lower):
+            matched_exclude.append(word)
+            score -= 25
 
-    # Must match at least one tech keyword
-    for keyword in TECH_KEYWORDS:
-        if keyword in role_lower:
-            return True, f"role '{role}' matches tech keyword: '{keyword}'"
-        # Word-boundary check for single words
-        pattern = rf"\b{re.escape(keyword)}\b"
-        if re.search(pattern, role_lower):
-            return True, f"role '{role}' matches tech keyword (boundary): '{keyword}'"
+    # 2. Scan for strong technical keywords (+20 points)
+    for keyword in STRONG_TECH_KEYWORDS:
+        if matches_keyword(keyword, role_lower):
+            matched_strong.append(keyword)
 
-    # Common tech role patterns that might not be in the keywords list
-    tech_patterns = [
-        r"\b(?:sde|swe|developer|engineer|programmer|coder|architect)\b",
-        r"\b(?:intern)\b.*(?:tech|software|engineer|develop|data|ml|ai)",
-    ]
-    for pat in tech_patterns:
-        if re.search(pat, role_lower):
-            return True, f"role '{role}' matches tech pattern"
+    # 3. Scan for partial technical keywords (+10 points)
+    for keyword in PARTIAL_TECH_KEYWORDS:
+        if matches_keyword(keyword, role_lower):
+            matched_partial.append(keyword)
 
-    return False, f"role '{role}' does not match any tech keywords"
+    # 4. Remove overlapping sub-keywords to avoid double-counting
+    # (e.g. if 'software development' is matched, don't count 'software' separately)
+    all_strong_matched = sorted(matched_strong, key=len, reverse=True)
+    final_strong = []
+    for kw in all_strong_matched:
+        if not any(kw in existing for existing in final_strong):
+            final_strong.append(kw)
+
+    all_partial_matched = sorted(matched_partial, key=len, reverse=True)
+    final_partial = []
+    for kw in all_partial_matched:
+        # Make sure it's not a substring of any strong keyword or other partial keyword
+        if not any(kw in existing for existing in final_strong) and not any(kw in existing for existing in final_partial):
+            final_partial.append(kw)
+
+    # Apply positive score
+    score += len(final_strong) * 20
+    score += len(final_partial) * 10
+
+    threshold = 10
+    passed = score >= threshold
+
+    reason = (
+        f"role '{role}' passed with score {score} (threshold: {threshold}). "
+        f"Strong matches: {final_strong}, Partial matches: {final_partial}, Excluded: {matched_exclude}"
+    )
+    if not passed:
+        reason = (
+            f"role '{role}' failed with score {score} (threshold: {threshold}). "
+            f"Strong matches: {final_strong}, Partial matches: {final_partial}, Excluded: {matched_exclude}"
+        )
+
+    return passed, reason
 
 
 # ─────────────────────────────────────────────────────────────────────

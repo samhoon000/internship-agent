@@ -24,7 +24,7 @@ class WellfoundScraper(BaseScraper):
         Uses Playwright for dynamic browser rendering, anti-bot handling, and human-like delays.
         """
         results = []
-        url = "https://wellfound.com/role/l/software-engineer-internship"
+        url = "https://wellfound.com/role/l/data-analyst-internship"
         logger.info(f"[Wellfound] Launching Playwright to scrape: {url}")
         
         try:

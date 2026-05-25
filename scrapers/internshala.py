@@ -171,14 +171,9 @@ class InternshalaScraper(BaseScraper):
         self.pages_scraped = 0
 
         categories = [
-            "python-development-internship",
+            "data-analytics-internship",
             "data-science-internship",
             "machine-learning-internship",
-            "artificial-intelligence-ai-internship",
-            "software-development-internship",
-            "backend-development-internship",
-            "full-stack-development-internship",
-            "data-analytics-internship",
         ]
 
         logger.info(f"[Internshala] Launching Playwright to scrape.")
@@ -279,6 +274,10 @@ class InternshalaScraper(BaseScraper):
                                             continue
 
                                         role = role_el.text.strip()
+                                        if cat == "machine-learning-internship":
+                                            role_lower = role.lower()
+                                            if not any(x in role_lower for x in ["data", "analytics", "analyst"]):
+                                                continue
                                         link_suffix = role_el.get('href') or card.get('data-href') or ""
                                         apply_link = f"https://internshala.com{link_suffix}" if link_suffix else ""
 

@@ -25,7 +25,7 @@ class IndeedScraper(BaseScraper):
         Uses Playwright for dynamic browser rendering, anti-bot handling, and human-like delays.
         """
         results = []
-        query = "python+internship"
+        query = "data+analyst+internship"
         logger.info(f"[Indeed India] Launching Playwright to scrape.")
         
         try:

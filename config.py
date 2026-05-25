@@ -31,13 +31,21 @@ PLAYWRIGHT_VIEWPORT = {"width": 1366, "height": 768}
 PLAYWRIGHT_TIMEOUT = 30000   # milliseconds – page navigation timeout
 
 # ── Strict Filter Keywords ────────────────────────────────────────
-TECH_KEYWORDS = [
-    "python", "sql", "data", "machine learning", "ai", "analytics", "backend",
-    "software engineer", "react", "javascript", "node", "deep learning",
-    "computer science", "full stack", "frontend", "c++", "java", "golang", "devops",
-    "data engineering", "data analyst", "data science", "cloud", "kubernetes",
-    "docker", "tensorflow", "pytorch", "nlp", "computer vision", "rust", "scala",
-    "django", "flask",
+STRONG_TECH_KEYWORDS = [
+    "data analyst", "business analyst", "data analytics", "analytics", "business intelligence", 
+    "bi analyst", "reporting analyst", "sql analyst", "power bi", "tableau", "excel analyst", 
+    "data science", "data scientist", "research analyst", "market research analyst", 
+    "data engineering", "dashboard analyst", "mis executive", "mis analyst"
+]
+
+PARTIAL_TECH_KEYWORDS = []
+
+TECH_KEYWORDS = STRONG_TECH_KEYWORDS + PARTIAL_TECH_KEYWORDS
+
+BOOST_SKILLS = [
+    "sql", "python", "excel", "power bi", "tableau", "pandas", "numpy",
+    "data visualization", "statistics", "machine learning", "etl", "dashboarding",
+    "google sheets", "reporting", "data cleaning"
 ]
 
 EXCLUDE_KEYWORDS = [
@@ -45,6 +53,9 @@ EXCLUDE_KEYWORDS = [
     "telecalling", "unpaid", "certificate-only", "graphic design", "content writing",
     "social media", "seo", "recruiting", "talent acquisition", "telecaller",
     "bde", "bda", "customer support", "receptionist", "operations",
+    "frontend", "backend", "full stack", "react", "node", "software developer", 
+    "software engineer", "web development", "wordpress", "flutter", "java developer", 
+    "android", "ios", "ui ux"
 ]
 
 # ── Source Domain Mappings (for URL validation) ───────────────────
