@@ -59,41 +59,69 @@ class WellfoundScraper(BaseScraper):
                     time.sleep(random.uniform(1.0, 2.0))
                 
                 try:
-                    page.wait_for_selector('[data-test="JobSearchResultCard"], .styles_jobCard__', timeout=10000)
+                    page.wait_for_selector(
+                        '[data-test="StartupResult"], [data-test="JobSearchResultCard"], .styles_jobCard__, .styles_result__, [class*="styles_result__"], [class*="styles_jobCard__"]',
+                        timeout=10000
+                    )
                 except Exception:
-                    logger.warning("[Wellfound] Selector '[data-test=\"JobSearchResultCard\"]' or '.styles_jobCard__' not found. Page might have blocked requests or structure changed.")
+                    logger.warning("[Wellfound] Selector fallbacks not found. Page might have blocked requests or structure changed.")
                 
                 html = page.content()
                 soup = BeautifulSoup(html, 'html.parser')
                 
-                job_cards = soup.select('.styles_jobCard__') or soup.select('[data-test="JobSearchResultCard"]')
+                job_cards = (
+                    soup.select('[data-test="StartupResult"]') or 
+                    soup.select('[data-test="JobSearchResultCard"]') or 
+                    soup.select('.styles_jobCard__') or 
+                    soup.select('.styles_result__') or
+                    soup.select('[class*="styles_result__"]') or 
+                    soup.select('[class*="styles_jobCard__"]') or
+                    soup.select('[class*="styles_startupCard__"]')
+                )
                 logger.info(f"[Wellfound] Found {len(job_cards)} job cards in rendered DOM.")
+                
+                if not job_cards:
+                    logger.warning("[Wellfound] No job cards found. Saving debug artifacts.")
+                    self.save_debug_artifacts(page)
                 
                 for card in job_cards:
                     try:
-                        role_el = card.select_one('.styles_title__') or card.select_one('[data-test="job-title"]')
+                        role_el = (
+                            card.select_one('[data-test="job-name"]') or 
+                            card.select_one('.styles_title__') or 
+                            card.select_one('[data-test="job-title"]') or
+                            card.select_one('a[href*="/jobs/"]')
+                        )
                         role = role_el.text.strip() if role_el else ""
                         
-                        company_el = card.select_one('.styles_name__') or card.select_one('[data-test="company-name"]')
+                        company_el = (
+                            card.select_one('[data-test="startup-name"]') or 
+                            card.select_one('.styles_name__') or 
+                            card.select_one('[data-test="company-name"]')
+                        )
                         company_name = company_el.text.strip() if company_el else ""
                         
-                        link_el = card.select_one('a')
+                        link_el = card.select_one('a[href*="/jobs/"]') or card.select_one('a')
                         apply_link = link_el['href'] if link_el and 'href' in link_el.attrs else ""
                         if apply_link and not apply_link.startswith('http'):
                             apply_link = f"https://wellfound.com{apply_link}"
                             
                         stipend = ""
-                        salary_el = card.select_one('.styles_salary__') or card.select_one('[data-test="compensation"]')
+                        salary_el = card.select_one('[data-test="compensation"]') or card.select_one('.styles_salary__')
                         if salary_el:
                             stipend = salary_el.text.strip()
                             
                         location = ""
-                        loc_el = card.select_one('.styles_location__') or card.select_one('[data-test="location"]')
+                        loc_el = card.select_one('[data-test="location"]') or card.select_one('.styles_location__')
                         if loc_el:
                             location = loc_el.text.strip()
                         
                         skills_found = []
-                        tags_el = card.select('.styles_tag__') or card.select('[data-test="job-tag"]')
+                        tags_el = (
+                            card.select('[class*="styles_tag__"]') or 
+                            card.select('[data-test="job-tag"]') or
+                            card.select('.styles_tag__')
+                        )
                         for tag in tags_el:
                             skills_found.append(tag.text.strip())
                         

@@ -74,7 +74,7 @@ def get_db_session():
     """Returns a new database session."""
     return Session()
 
-def save_internships(internship_dicts):
+def save_internships(internship_dicts, stats_dict=None):
     """
     Saves a list of internship dictionaries to the database.
     Prevents duplicates by:
@@ -101,6 +101,11 @@ def save_internships(internship_dicts):
             company_name = item.get('company_name', '').strip()
             role = item.get('role', '').strip()
             score = item.get('legitimacy_score', 0)
+            source = item.get('source', 'Unknown')
+
+            # Initialize stats for this source if stats_dict is provided
+            if stats_dict is not None and source not in stats_dict:
+                stats_dict[source] = {'added': 0, 'updated': 0, 'skipped': 0}
 
             # Check critical fields (safety gate)
             if not apply_link or not company_name or not role:
@@ -166,8 +171,12 @@ def save_internships(internship_dicts):
                 if updated:
                     target_record.created_at = datetime.utcnow()  # Update timestamp on modification
                     updated_count += 1
+                    if stats_dict is not None:
+                        stats_dict[source]['updated'] += 1
                 else:
                     skipped_count += 1
+                    if stats_dict is not None:
+                        stats_dict[source]['skipped'] += 1
             else:
                 # Create a new record
                 new_internship = Internship(
@@ -180,13 +189,15 @@ def save_internships(internship_dicts):
                     remote=item.get('remote', False),
                     duration=item.get('duration'),
                     skills=item.get('skills'),
-                    source=item.get('source'),
+                    source=source,
                     legitimacy_score=score,
                     created_at=datetime.utcnow()
                 )
                 session.add(new_internship)
                 existing_records.append(new_internship)  # Keep local cache updated
                 saved_count += 1
+                if stats_dict is not None:
+                    stats_dict[source]['added'] += 1
 
         session.commit()
         logger.info(f"Database sync complete. Added: {saved_count}, Updated: {updated_count}, Duplicates skipped: {skipped_count}, Rejected low-confidence: {rejected_low_confidence}, Rejected malformed: {rejected_malformed}")

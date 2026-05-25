@@ -37,13 +37,14 @@ TECH_KEYWORDS = [
     "computer science", "full stack", "frontend", "c++", "java", "golang", "devops",
     "data engineering", "data analyst", "data science", "cloud", "kubernetes",
     "docker", "tensorflow", "pytorch", "nlp", "computer vision", "rust", "scala",
+    "django", "flask",
 ]
 
 EXCLUDE_KEYWORDS = [
     "sales", "marketing", "hr", "campus ambassador", "business development",
     "telecalling", "unpaid", "certificate-only", "graphic design", "content writing",
     "social media", "seo", "recruiting", "talent acquisition", "telecaller",
-    "bde", "bda", "customer support", "receptionist",
+    "bde", "bda", "customer support", "receptionist", "operations",
 ]
 
 # ── Source Domain Mappings (for URL validation) ───────────────────

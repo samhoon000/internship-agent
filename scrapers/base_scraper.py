@@ -27,6 +27,33 @@ class BaseScraper(ABC):
         self.score_below_threshold = 0
         self.blocked = False
 
+    def save_debug_artifacts(self, page, custom_name: str = None):
+        """Saves page screenshot and HTML content for debugging."""
+        import os
+        from datetime import datetime
+        os.makedirs("debug_screenshots", exist_ok=True)
+        os.makedirs("debug_html", exist_ok=True)
+        
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        name_prefix = custom_name or self.source_name.lower().replace(" ", "_")
+        
+        screenshot_path = f"debug_screenshots/{name_prefix}_{timestamp}.png"
+        html_path = f"debug_html/{name_prefix}_{timestamp}.html"
+        
+        try:
+            page.screenshot(path=screenshot_path)
+            logger.info(f"[{self.source_name}] Saved debug screenshot to {screenshot_path}")
+        except Exception as e:
+            logger.error(f"[{self.source_name}] Failed to save debug screenshot: {e}")
+            
+        try:
+            with open(html_path, "w", encoding="utf-8") as f:
+                f.write(page.content())
+            logger.info(f"[{self.source_name}] Saved debug HTML to {html_path}")
+        except Exception as e:
+            logger.error(f"[{self.source_name}] Failed to save debug HTML: {e}")
+
+
     @abstractmethod
     def scrape_live(self) -> list[dict]:
         """Performs the live web scraping logic. Returns a list of raw internship dictionaries."""

@@ -59,39 +59,75 @@ class YCJobsScraper(BaseScraper):
                     time.sleep(random.uniform(1.0, 2.0))
                 
                 try:
-                    page.wait_for_selector('.job-card, .job-listing', timeout=10000)
+                    page.wait_for_selector('.bg-beige-lighter, p.job-details, .flex.h-full.cursor-pointer.flex-col', timeout=10000)
                 except Exception:
-                    logger.warning("[YC Jobs] Selector '.job-card' or '.job-listing' not found. Page might have blocked requests or structure changed.")
+                    logger.warning("[YC Jobs] Selector fallbacks not found. Page might have blocked requests or structure changed.")
                 
                 html = page.content()
                 soup = BeautifulSoup(html, 'html.parser')
                 
-                job_cards = soup.select('.job-card') or soup.select('.job-listing')
+                # Retrieve job cards using multiple fallbacks
+                job_cards = (
+                    soup.select('div.bg-beige-lighter') or 
+                    [p.parent.parent for p in soup.select('p.job-details')] or 
+                    soup.select('div.flex.h-full.cursor-pointer.flex-col')
+                )
                 logger.info(f"[YC Jobs] Found {len(job_cards)} job cards in rendered DOM.")
+                
+                if not job_cards:
+                    logger.warning("[YC Jobs] No job cards found. Saving debug artifacts.")
+                    self.save_debug_artifacts(page)
                 
                 for card in job_cards:
                     try:
-                        role_el = card.select_one('.job-title') or card.select_one('h4')
+                        role_el = card.select_one('a[href^="/jobs/"]')
+                        # Extract only digit-terminated job links to avoid category paths
+                        href = role_el.get('href', '') if role_el else ""
+                        is_job_detail = href.startswith('/jobs/') and href.replace('/jobs/', '').isdigit()
+                        if not is_job_detail:
+                            continue
+                            
                         role = role_el.text.strip() if role_el else ""
+                        apply_link = f"https://www.workatastartup.com{href}" if href else ""
                         
-                        company_el = card.select_one('.company-name') or card.select_one('.company-title')
+                        company_el = card.select_one('.font-bold') or card.select_one('a[href^="/companies/"]') or card.select_one('.company-name')
                         company_name = company_el.text.strip() if company_el else ""
+                        # clean suffix like (S15) or similar if needed (e.g. SnapMagic(S15) -> SnapMagic)
+                        # The pipeline is robust, but cleaning here is very clean.
+                        if company_name and "(" in company_name:
+                            company_name = company_name.split("(")[0].strip()
                         
-                        link_el = card.select_one('a')
-                        apply_link = link_el['href'] if link_el and 'href' in link_el.attrs else ""
-                        if apply_link and not apply_link.startswith('http'):
-                            apply_link = f"https://www.workatastartup.com{apply_link}"
-                            
+                        # Extract location, stipend, duration from spans in .job-details
                         stipend = ""
-                        salary_el = card.select_one('.salary-estimate') or card.select_one('.compensation')
-                        if salary_el:
-                            stipend = salary_el.text.strip()
-                            
                         location = ""
-                        loc_el = card.select_one('.job-location') or card.select_one('.location')
-                        if loc_el:
-                            location = loc_el.text.strip()
+                        duration = ""
                         
+                        spans = [span.text.strip() for span in card.select('p.job-details span')]
+                        for text in spans:
+                            if any(c in text for c in ['$', '€', '₹', 'salary', '/yr', '/mo']):
+                                stipend = text
+                            elif any(c in text.lower() for c in ['fulltime', 'parttime', 'internship', 'contract', 'months', 'weeks']):
+                                duration = text
+                            elif ',' in text or 'remote' in text.lower() or text in ['US', 'IN', 'Remote']:
+                                location = text
+                        
+                        # Fallback checks if spans are not structured
+                        if not location:
+                            loc_el = card.select_one('.job-location') or card.select_one('.location')
+                            if loc_el:
+                                location = loc_el.text.strip()
+                                
+                        if not stipend:
+                            salary_el = card.select_one('.salary-estimate') or card.select_one('.compensation')
+                            if salary_el:
+                                stipend = salary_el.text.strip()
+                                
+                        if not duration:
+                            duration_el = card.select_one('.job-duration')
+                            if duration_el:
+                                duration = duration_el.text.strip()
+
+                        # Skills (infer from title if not directly listed in DOM)
                         skills_found = []
                         tags_el = card.select('.tag, .skill')
                         for tag in tags_el:
@@ -99,18 +135,13 @@ class YCJobsScraper(BaseScraper):
                         
                         skills_str = ", ".join(skills_found) if skills_found else ""
                         
-                        duration = ""
-                        duration_el = card.select_one('.job-duration')
-                        if duration_el:
-                            duration = duration_el.text.strip()
-                        
                         if role and company_name and apply_link:
                             results.append({
                                 "company_name": company_name,
                                 "role": role,
-                                "stipend": stipend,
-                                "location": location,
-                                "duration": duration,
+                                "stipend": stipend if stipend else "Unspecified",
+                                "location": location if location else "Remote",
+                                "duration": duration if duration else "Not Specified",
                                 "skills": skills_str,
                                 "apply_link": apply_link,
                                 "source": "YC Jobs"

@@ -219,8 +219,17 @@ if st.sidebar.button("🚀 Run Discovery Scrapers Now", use_container_width=True
         status_text.text("Saving internships and filtering duplicates...")
         
         # Save to DB
-        added, updated, skipped = save_internships(all_scraped)
+        stats = {}
+        added, updated, skipped = save_internships(all_scraped, stats_dict=stats)
         
+        # Log Internshala specific stats to output log
+        ishala_scraper = next((s[0] for s in scrapers if s[0].source_name == "Internshala"), None)
+        if ishala_scraper:
+            import logging
+            dash_logger = logging.getLogger("internship_agent.dashboard")
+            ishala_stats = stats.get("Internshala", {"added": 0, "updated": 0, "skipped": 0})
+            dash_logger.info(f"Internshala run stats from Dashboard: Pages: {getattr(ishala_scraper, 'pages_scraped', 0)}, Scraped: {ishala_scraper.scraped_count}, Unpaid: {ishala_scraper.unpaid_or_cert}, Suspicious: {ishala_scraper.rejected_suspicious + ishala_scraper.score_below_threshold}, Broken: {ishala_scraper.broken_urls}, Added: {ishala_stats['added']}")
+
         # Reload
         df = load_data_from_db()
         # Re-apply filters

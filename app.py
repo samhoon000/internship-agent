@@ -56,8 +56,28 @@ def run_agent_cycle():
     logger.info("Saving results to SQL database and applying deduplication...")
     
     # Save to database
-    added, updated, skipped = save_internships(all_scraped_items)
+    stats = {}
+    added, updated, skipped = save_internships(all_scraped_items, stats_dict=stats)
     
+    # Extract and log detailed Internshala metrics
+    internshala_scraper = next((s for s in scrapers if s.source_name == "Internshala"), None)
+    if internshala_scraper:
+        ishala_stats = stats.get("Internshala", {"added": 0, "updated": 0, "skipped": 0})
+        ishala_report = f"""
+========================================================
+INTERNSHALA DETAILED REPORT
+========================================================
+Pages scraped: {getattr(internshala_scraper, 'pages_scraped', 0)}
+Raw internships found: {internshala_scraper.scraped_count}
+Rejected unpaid: {internshala_scraper.unpaid_or_cert}
+Rejected suspicious companies: {internshala_scraper.rejected_suspicious + internshala_scraper.score_below_threshold}
+Broken URLs: {internshala_scraper.broken_urls}
+Inserted into SQL: {ishala_stats['added']}
+========================================================
+"""
+        logger.info(ishala_report)
+        print(ishala_report)
+
     # print and log production metrics exactly as requested
     metrics_report = f"""
 ========================================================
