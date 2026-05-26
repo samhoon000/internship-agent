@@ -31,15 +31,36 @@ PLAYWRIGHT_VIEWPORT = {"width": 1366, "height": 768}
 PLAYWRIGHT_TIMEOUT = 30000   # milliseconds – page navigation timeout
 
 # ── Strict Filter Keywords ────────────────────────────────────────
-STRONG_TECH_KEYWORDS = [
-    "data analyst", "business analyst", "data analytics", "analytics", "business intelligence", 
-    "bi analyst", "reporting analyst", "sql analyst", "power bi", "tableau", "excel analyst", 
-    "data science", "data scientist", "research analyst", "market research analyst", 
-    "data engineering", "dashboard analyst", "mis executive", "mis analyst"
+ROLE_WHITELIST_KEYWORDS = [
+    "data analyst", "business analyst", "data analytics", "analytics", "sql",
+    "power bi", "tableau", "bi analyst", "research analyst", "reporting analyst",
+    "data engineer", "data science", "machine learning", "quant analyst",
+    "quantitative analyst", "technical analyst", "financial analyst",
+    "statistics", "data visualization", "excel", "python", "pandas", "databricks",
+    "data analysis", "data specialist", "bi developer", "data architect",
+    "data modeler", "data wrangler", "insights analyst", "product analyst",
+    "analytics engineer"
 ]
 
-PARTIAL_TECH_KEYWORDS = []
+ROLE_CONTEXT_KEYWORDS = [
+    "data", "analyst", "analytics", "sql", "business intelligence", "reporting", "analysis"
+]
 
+ROLE_HARD_EXCLUDE_KEYWORDS = [
+    "marketing", "seo", "wordpress", "react", "node", "frontend", "backend",
+    "full stack", "sales", "hr", "customer support", "content writing",
+    "social media", "recruiting", "talent acquisition", "telecalling",
+    "telecaller", "bda", "bde", "receptionist", "graphic design"
+]
+
+ROLE_SOFT_EXCLUDE_KEYWORDS = [
+    "software developer", "software engineer", "web development", "wordpress", "flutter",
+    "java developer", "android", "ios", "ui ux", "operations", "campus ambassador",
+    "business development"
+]
+
+STRONG_TECH_KEYWORDS = ROLE_WHITELIST_KEYWORDS
+PARTIAL_TECH_KEYWORDS = []
 TECH_KEYWORDS = STRONG_TECH_KEYWORDS + PARTIAL_TECH_KEYWORDS
 
 BOOST_SKILLS = [
@@ -48,15 +69,7 @@ BOOST_SKILLS = [
     "google sheets", "reporting", "data cleaning"
 ]
 
-EXCLUDE_KEYWORDS = [
-    "sales", "marketing", "hr", "campus ambassador", "business development",
-    "telecalling", "unpaid", "certificate-only", "graphic design", "content writing",
-    "social media", "seo", "recruiting", "talent acquisition", "telecaller",
-    "bde", "bda", "customer support", "receptionist", "operations",
-    "frontend", "backend", "full stack", "react", "node", "software developer", 
-    "software engineer", "web development", "wordpress", "flutter", "java developer", 
-    "android", "ios", "ui ux"
-]
+EXCLUDE_KEYWORDS = ROLE_HARD_EXCLUDE_KEYWORDS + ROLE_SOFT_EXCLUDE_KEYWORDS
 
 # ── Source Domain Mappings (for URL validation) ───────────────────
 # Each source's apply_link MUST contain one of its allowed domains.

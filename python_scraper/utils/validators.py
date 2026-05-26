@@ -22,10 +22,10 @@ from urllib.parse import urlparse
 from python_scraper.config import (
     SOURCE_DOMAIN_MAP,
     SUSPICIOUS_COMPANY_PATTERNS,
-    TECH_KEYWORDS,
-    STRONG_TECH_KEYWORDS,
-    PARTIAL_TECH_KEYWORDS,
-    EXCLUDE_KEYWORDS,
+    ROLE_WHITELIST_KEYWORDS,
+    ROLE_CONTEXT_KEYWORDS,
+    ROLE_HARD_EXCLUDE_KEYWORDS,
+    ROLE_SOFT_EXCLUDE_KEYWORDS,
     REQUEST_TIMEOUT,
 )
 
@@ -178,16 +178,17 @@ def _check_dns(domain: str) -> bool:
 
 def validate_role_quality(role: str) -> tuple[bool, str]:
     """
-    Ensures the role is a legitimate tech internship using weighted scoring.
+    Ensures the role is a legitimate tech/data internship using weighted scoring.
     """
     if not role or not role.strip():
         return False, "role is empty"
 
     role_lower = role.strip().lower()
     score = 0
-    matched_exclude = []
-    matched_strong = []
-    matched_partial = []
+    matched_whitelist = []
+    matched_context = []
+    matched_hard_exclude = []
+    matched_soft_exclude = []
 
     def matches_keyword(keyword: str, text: str) -> bool:
         if len(keyword) <= 3 and keyword.isalnum():
@@ -195,53 +196,58 @@ def validate_role_quality(role: str) -> tuple[bool, str]:
             return bool(re.search(pattern, text))
         return keyword in text
 
-    # 1. Scan for excluded keywords (each match subtracts 25 points)
-    for word in EXCLUDE_KEYWORDS:
-        if matches_keyword(word, role_lower):
-            matched_exclude.append(word)
-            score -= 25
+    # 1. Whitelist matches (sorted by length descending to prevent double-counting)
+    sorted_whitelist = sorted(ROLE_WHITELIST_KEYWORDS, key=len, reverse=True)
+    for kw in sorted_whitelist:
+        if matches_keyword(kw, role_lower):
+            if not any(kw in matched for matched in matched_whitelist):
+                matched_whitelist.append(kw)
 
-    # 2. Scan for strong technical keywords (+20 points)
-    for keyword in STRONG_TECH_KEYWORDS:
-        if matches_keyword(keyword, role_lower):
-            matched_strong.append(keyword)
+    # 2. Context matches (only if not a substring of a matched whitelist term)
+    for kw in ROLE_CONTEXT_KEYWORDS:
+        if matches_keyword(kw, role_lower):
+            if not any(kw in matched for matched in matched_whitelist):
+                matched_context.append(kw)
 
-    # 3. Scan for partial technical keywords (+10 points)
-    for keyword in PARTIAL_TECH_KEYWORDS:
-        if matches_keyword(keyword, role_lower):
-            matched_partial.append(keyword)
+    # Context presence flag (if any whitelist or context keyword matched)
+    context_present = len(matched_whitelist) > 0 or len(matched_context) > 0
 
-    # 4. Remove overlapping sub-keywords to avoid double-counting
-    # (e.g. if 'software development' is matched, don't count 'software' separately)
-    all_strong_matched = sorted(matched_strong, key=len, reverse=True)
-    final_strong = []
-    for kw in all_strong_matched:
-        if not any(kw in existing for existing in final_strong):
-            final_strong.append(kw)
+    # 3. Exclusions
+    for kw in ROLE_HARD_EXCLUDE_KEYWORDS:
+        if matches_keyword(kw, role_lower):
+            matched_hard_exclude.append(kw)
 
-    all_partial_matched = sorted(matched_partial, key=len, reverse=True)
-    final_partial = []
-    for kw in all_partial_matched:
-        # Make sure it's not a substring of any strong keyword or other partial keyword
-        if not any(kw in existing for existing in final_strong) and not any(kw in existing for existing in final_partial):
-            final_partial.append(kw)
+    for kw in ROLE_SOFT_EXCLUDE_KEYWORDS:
+        if matches_keyword(kw, role_lower):
+            matched_soft_exclude.append(kw)
 
-    # Apply positive score
-    score += len(final_strong) * 20
-    score += len(final_partial) * 10
+    # 4. Calculate score
+    whitelist_score = len(matched_whitelist) * 30
+    context_score = len(matched_context) * 15
+
+    hard_exclude_penalty = 0
+    for kw in matched_hard_exclude:
+        penalty = 10 if context_present else 25
+        hard_exclude_penalty += penalty
+
+    soft_exclude_penalty = 0
+    for kw in matched_soft_exclude:
+        penalty = 5 if context_present else 15
+        soft_exclude_penalty += penalty
+
+    score = whitelist_score + context_score - hard_exclude_penalty - soft_exclude_penalty
 
     threshold = 10
     passed = score >= threshold
+    decision = "PASSED" if passed else "FAILED"
 
     reason = (
-        f"role '{role}' passed with score {score} (threshold: {threshold}). "
-        f"Strong matches: {final_strong}, Partial matches: {final_partial}, Excluded: {matched_exclude}"
+        f"Role quality check {decision} with score {score} (threshold: {threshold}).\n"
+        f"  - Whitelist Matches (+30/ea): {matched_whitelist} -> +{whitelist_score}\n"
+        f"  - Context Matches (+15/ea): {matched_context} -> +{context_score}\n"
+        f"  - Hard Exclusions (-25 or -10/ea): {matched_hard_exclude} -> -{hard_exclude_penalty} (context present: {context_present})\n"
+        f"  - Soft Exclusions (-15 or -5/ea): {matched_soft_exclude} -> -{soft_exclude_penalty} (context present: {context_present})"
     )
-    if not passed:
-        reason = (
-            f"role '{role}' failed with score {score} (threshold: {threshold}). "
-            f"Strong matches: {final_strong}, Partial matches: {final_partial}, Excluded: {matched_exclude}"
-        )
 
     return passed, reason
 
