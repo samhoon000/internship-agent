@@ -1,0 +1,95 @@
+@import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+@theme {
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  
+  /* Trust-inspiring corporate blue color system */
+  --color-primary-50: #eff6ff;
+  --color-primary-100: #dbeafe;
+  --color-primary-200: #bfdbfe;
+  --color-primary-300: #93c5fd;
+  --color-primary-400: #60a5fa;
+  --color-primary-500: #2563eb;
+  --color-primary-600: #1d4ed8;
+  --color-primary-700: #1e40af;
+  --color-primary-800: #1e3a8a;
+  --color-primary-900: #172554;
+  
+  /* Accent color is clean slate/neutral or a dark accent to keep it look handcrafted */
+  --color-accent-50: #f8fafc;
+  --color-accent-100: #f1f5f9;
+  --color-accent-200: #e2e8f0;
+  --color-accent-300: #cbd5e1;
+  --color-accent-400: #94a3b8;
+  --color-accent-500: #64748b;
+  --color-accent-600: #475569;
+  --color-accent-700: #334155;
+  --color-accent-800: #1e293b;
+  --color-accent-900: #0f172a;
+
+  --color-cyan-50: #ecfeff;
+  --color-cyan-100: #cffafe;
+  --color-cyan-200: #a5f3fc;
+  --color-cyan-300: #67e8f9;
+  --color-cyan-400: #22d3ee;
+  --color-cyan-500: #06b6d4;
+  
+  --shadow-premium: 0 1px 3px 0 rgba(0, 0, 0, 0.05), 0 1px 2px -1px rgba(0, 0, 0, 0.05);
+  --shadow-premium-hover: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
+  --shadow-glass: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+}
+
+body {
+  background-color: #f8fafc;
+  color: #1e293b;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  letter-spacing: -0.02em;
+}
+
+/* Premium Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Redesigned clean panels (no glassmorphism blobs) */
+.glass-panel {
+  background-color: #ffffff;
+  border: 1px solid #e2e8f0;
+}
+
+/* Shimmer/Skeleton loading animation */
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.shimmer {
+  background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
