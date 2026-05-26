@@ -58,7 +58,7 @@ export interface ScraperStatusResponse {
 
 const API_BASE_URL = 'http://localhost:5000/api';
 
-export async function fetchInternships(params: Record<string, string>): Promise<InternshipResponse> {
+export async function fetchInternships(params: Record<string, any>): Promise<InternshipResponse> {
   const queryParams = new URLSearchParams();
   Object.entries(params).forEach(([key, val]) => {
     if (val !== undefined && val !== null && val !== '') {

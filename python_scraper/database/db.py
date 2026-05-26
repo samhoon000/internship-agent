@@ -1,5 +1,6 @@
 import logging
 import difflib
+import re
 from datetime import datetime
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, scoped_session
@@ -74,6 +75,20 @@ def get_db_session():
     """Returns a new database session."""
     return Session()
 
+def parse_stipend_to_numeric(stipend_str: str) -> int:
+    if not stipend_str:
+        return 0
+    # Remove commas and currency signs
+    clean = re.sub(r'[,₹$]', '', stipend_str)
+    # Find all sequences of numbers
+    matches = re.findall(r'\d+', clean)
+    if not matches:
+        return 0
+    nums = [int(m) for m in matches]
+    if len(nums) >= 2:
+        return int((nums[0] + nums[1]) / 2)
+    return nums[0]
+
 def save_internships(internship_dicts, stats_dict=None):
     """
     Saves a list of internship dictionaries to the database.
@@ -139,6 +154,7 @@ def save_internships(internship_dicts, stats_dict=None):
                 # Update fields if new data has value
                 if item.get('stipend') and target_record.stipend != item.get('stipend'):
                     target_record.stipend = item.get('stipend')
+                    target_record.stipend_numeric = parse_stipend_to_numeric(item.get('stipend'))
                     updated = True
                 
                 if item.get('paid') is not None and target_record.paid != item.get('paid'):
@@ -184,6 +200,7 @@ def save_internships(internship_dicts, stats_dict=None):
                     company_name=company_name,
                     role=role,
                     stipend=item.get('stipend'),
+                    stipend_numeric=parse_stipend_to_numeric(item.get('stipend')),
                     paid=item.get('paid', False),
                     location=item.get('location'),
                     remote=item.get('remote', False),

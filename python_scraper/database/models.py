@@ -21,6 +21,7 @@ class Internship(Base):
     skills = Column(String(500), nullable=True)  # Stored as comma-separated text
     source = Column(String(100), nullable=False)
     legitimacy_score = Column(Integer, default=50, nullable=False)
+    stipend_numeric = Column(Integer, default=0, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     def to_dict(self):
@@ -37,5 +38,6 @@ class Internship(Base):
             "apply_link": self.apply_link,
             "source": self.source,
             "legitimacy_score": self.legitimacy_score,
+            "stipend_numeric": self.stipend_numeric,
             "created_at": self.created_at.strftime("%Y-%m-%d %H:%M:%S") if self.created_at else None
         }
