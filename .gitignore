@@ -36,3 +36,5 @@ yarn-error.log*
 .DS_Store
 Thumbs.db
 .gemini/
+debug_screenshots/
+debug_html/

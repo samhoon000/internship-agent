@@ -61,6 +61,27 @@ def init_db():
             
         Base.metadata.create_all(engine)
         logger.info("Database startup sequence: SUCCESSFUL. Table 'internships' created or verified successfully.")
+
+        # Verify and add posted_at and freshness_score columns dynamically if they do not exist
+        try:
+            with engine.connect() as conn:
+                from sqlalchemy import text
+                columns_query = conn.execute(text("SHOW COLUMNS FROM internships"))
+                existing_cols = [row[0] for row in columns_query.fetchall()]
+                
+                if "posted_at" not in existing_cols:
+                    logger.info("[Migration] Adding 'posted_at' column to 'internships' table...")
+                    conn.execute(text("ALTER TABLE internships ADD COLUMN posted_at DATETIME DEFAULT NULL"))
+                    logger.info("[Migration] Column 'posted_at' added successfully.")
+                
+                if "freshness_score" not in existing_cols:
+                    logger.info("[Migration] Adding 'freshness_score' column to 'internships' table...")
+                    conn.execute(text("ALTER TABLE internships ADD COLUMN freshness_score INT DEFAULT 0"))
+                    logger.info("[Migration] Column 'freshness_score' added successfully.")
+                
+                conn.commit()
+        except Exception as migration_error:
+            logger.warning(f"Database startup sequence: Auto-migration of columns failed: {migration_error}")
     except Exception as e:
         logger.critical(f"Database startup sequence: FAILED. Error initializing tables: {e}", exc_info=True)
         raise e
@@ -92,15 +113,11 @@ def parse_stipend_to_numeric(stipend_str: str) -> int:
 def save_internships(internship_dicts, stats_dict=None):
     """
     Saves a list of internship dictionaries to the database.
-    Prevents duplicates by:
-    1. Checking for unique apply_link.
-    2. Fuzzy matching company_name + role against existing records.
-    Updates existing records if changes are detected.
-    Ensures SQL Insert Safety by rejecting low legitimacy or malformed rows.
+    Prevents duplicates by checking against memory sets of existing records (apply_link and company_name + role).
+    Uses SQLAlchemy bulk_insert_mappings for high performance database writes.
     """
     session = get_db_session()
     saved_count = 0
-    updated_count = 0
     skipped_count = 0
     rejected_low_confidence = 0
     rejected_malformed = 0
@@ -108,9 +125,14 @@ def save_internships(internship_dicts, stats_dict=None):
     from python_scraper.config import MIN_LEGITIMACY_TO_KEEP
 
     try:
-        # Load all existing internships into memory to avoid repeated queries in fuzzy matching
-        existing_records = session.query(Internship).all()
+        # Load all existing links and combos into memory sets
+        existing_links = {r[0] for r in session.query(Internship.apply_link).all()}
+        existing_combos = {f"{r[0].lower().strip()}||{r[1].lower().strip()}" 
+                           for r in session.query(Internship.company_name, Internship.role).all() if r[0] and r[1]}
 
+        to_insert = []
+        
+        # Sort incoming data to process newest first (so if duplicates exist in incoming, we keep the newest)
         for item in internship_dicts:
             apply_link = item.get('apply_link')
             company_name = item.get('company_name', '').strip()
@@ -134,91 +156,72 @@ def save_internships(internship_dicts, stats_dict=None):
                 rejected_low_confidence += 1
                 continue
 
-            # 1. Exact link check
-            existing_by_link = next((r for r in existing_records if r.apply_link == apply_link), None)
-            
-            # 2. Fuzzy similarity check on company_name + role
-            existing_by_similarity = None
-            if not existing_by_link:
-                for r in existing_records:
-                    if is_similar(r.company_name, company_name) and is_similar(r.role, role):
-                        existing_by_similarity = r
-                        break
+            combo = f"{company_name.lower()}||{role.lower()}"
 
-            target_record = existing_by_link or existing_by_similarity
-
-            if target_record:
-                # Update existing record if needed
-                updated = False
-                
-                # Update fields if new data has value
-                if item.get('stipend') and target_record.stipend != item.get('stipend'):
-                    target_record.stipend = item.get('stipend')
-                    target_record.stipend_numeric = parse_stipend_to_numeric(item.get('stipend'))
-                    updated = True
-                
-                if item.get('paid') is not None and target_record.paid != item.get('paid'):
-                    target_record.paid = item.get('paid')
-                    updated = True
-
-                if item.get('location') and target_record.location != item.get('location'):
-                    target_record.location = item.get('location')
-                    updated = True
-
-                if item.get('remote') is not None and target_record.remote != item.get('remote'):
-                    target_record.remote = item.get('remote')
-                    updated = True
-
-                if item.get('duration') and target_record.duration != item.get('duration'):
-                    target_record.duration = item.get('duration')
-                    updated = True
-
-                if item.get('skills') and target_record.skills != item.get('skills'):
-                    target_record.skills = item.get('skills')
-                    updated = True
-
-                if item.get('legitimacy_score') is not None and target_record.legitimacy_score != item.get('legitimacy_score'):
-                    # Retain the higher legitimacy score
-                    new_score = item.get('legitimacy_score')
-                    if new_score > target_record.legitimacy_score:
-                        target_record.legitimacy_score = new_score
-                        updated = True
-
-                if updated:
-                    target_record.created_at = datetime.utcnow()  # Update timestamp on modification
-                    updated_count += 1
-                    if stats_dict is not None:
-                        stats_dict[source]['updated'] += 1
-                else:
-                    skipped_count += 1
-                    if stats_dict is not None:
-                        stats_dict[source]['skipped'] += 1
-            else:
-                # Create a new record
-                new_internship = Internship(
-                    apply_link=apply_link,
-                    company_name=company_name,
-                    role=role,
-                    stipend=item.get('stipend'),
-                    stipend_numeric=parse_stipend_to_numeric(item.get('stipend')),
-                    paid=item.get('paid', False),
-                    location=item.get('location'),
-                    remote=item.get('remote', False),
-                    duration=item.get('duration'),
-                    skills=item.get('skills'),
-                    source=source,
-                    legitimacy_score=score,
-                    created_at=datetime.utcnow()
-                )
-                session.add(new_internship)
-                existing_records.append(new_internship)  # Keep local cache updated
-                saved_count += 1
+            # Dedup check
+            if apply_link in existing_links or combo in existing_combos:
+                skipped_count += 1
                 if stats_dict is not None:
-                    stats_dict[source]['added'] += 1
+                    stats_dict[source]['skipped'] += 1
+                continue
 
-        session.commit()
-        logger.info(f"Database sync complete. Added: {saved_count}, Updated: {updated_count}, Duplicates skipped: {skipped_count}, Rejected low-confidence: {rejected_low_confidence}, Rejected malformed: {rejected_malformed}")
-        return saved_count, updated_count, skipped_count
+            # Prepare for insertion
+            stipend_numeric = parse_stipend_to_numeric(item.get('stipend'))
+            
+            # Parse or set posted_at
+            posted_at = item.get('posted_at')
+            if isinstance(posted_at, str):
+                try:
+                    posted_at = datetime.strptime(posted_at, "%Y-%m-%d %H:%M:%S")
+                except ValueError:
+                    posted_at = datetime.utcnow()
+            elif not posted_at:
+                posted_at = datetime.utcnow()
+
+            # Calculate initial freshness score
+            age_hours = (datetime.utcnow() - posted_at).total_seconds() / 3600.0
+            if age_hours <= 24:
+                freshness = 100
+            elif age_hours <= 48:
+                freshness = 80
+            elif age_hours <= 96:
+                freshness = 50
+            else:
+                freshness = 0
+
+            new_record = {
+                "apply_link": apply_link,
+                "company_name": company_name,
+                "role": role,
+                "stipend": item.get('stipend'),
+                "stipend_numeric": stipend_numeric,
+                "paid": item.get('paid', False),
+                "location": item.get('location'),
+                "remote": item.get('remote', False),
+                "duration": item.get('duration'),
+                "skills": item.get('skills'),
+                "source": source,
+                "legitimacy_score": score,
+                "freshness_score": freshness,
+                "posted_at": posted_at,
+                "created_at": datetime.utcnow()
+            }
+            to_insert.append(new_record)
+            
+            # Keep memory sets updated in case duplicates exist within the batch itself
+            existing_links.add(apply_link)
+            existing_combos.add(combo)
+            
+            saved_count += 1
+            if stats_dict is not None:
+                stats_dict[source]['added'] += 1
+
+        if to_insert:
+            session.bulk_insert_mappings(Internship, to_insert)
+            session.commit()
+            
+        logger.info(f"Database sync complete. Bulk inserted: {saved_count}, Skipped/Duplicates: {skipped_count}, Rejected low-confidence: {rejected_low_confidence}, Rejected malformed: {rejected_malformed}")
+        return saved_count, 0, skipped_count
 
     except Exception as e:
         session.rollback()

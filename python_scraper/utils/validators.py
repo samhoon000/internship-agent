@@ -36,12 +36,12 @@ logger = logging.getLogger("python_scraper.validators")
 # STAGE 1 — URL VALIDATION
 # ─────────────────────────────────────────────────────────────────────
 
-def validate_url(apply_link: str, source: str) -> tuple[bool, str]:
+def validate_url(apply_link: str, source: str, check_liveness: bool = True) -> tuple[bool, str]:
     """
     Validates that the apply_link:
       - starts with https://
       - belongs to the correct source domain
-      - responds with HTTP 200 or a valid redirect (3xx → 200)
+      - responds with HTTP 200 or a valid redirect (3xx → 200) [optional]
       - is not a dead link, redirect loop, or placeholder
     """
     if not apply_link or not apply_link.strip():
@@ -71,6 +71,9 @@ def validate_url(apply_link: str, source: str) -> tuple[bool, str]:
     for slug in placeholder_slugs:
         if slug in link_lower:
             return False, f"apply_link contains placeholder slug: '{slug}'"
+
+    if not check_liveness:
+        return True, "URL structure is valid"
 
     # HTTP HEAD check for liveness
     try:
@@ -162,6 +165,9 @@ def _infer_domain(company_name: str) -> str:
     return f"{parts[0]}.com"
 
 
+from functools import lru_cache
+
+@lru_cache(maxsize=1024)
 def _check_dns(domain: str) -> bool:
     """Returns True if the domain resolves via DNS."""
     try:
@@ -322,7 +328,7 @@ def validate_data_completeness(item: dict) -> tuple[bool, str]:
 # MASTER VALIDATION PIPELINE
 # ─────────────────────────────────────────────────────────────────────
 
-def run_validation_pipeline(item: dict) -> tuple[bool, list[str]]:
+def run_validation_pipeline(item: dict, check_liveness: bool = True) -> tuple[bool, list[str]]:
     """
     Runs all 5 validation stages on a single internship dict.
 
@@ -363,7 +369,7 @@ def run_validation_pipeline(item: dict) -> tuple[bool, list[str]]:
         notes.append(f"[PAYMENT] {reason}")
 
     # Stage 5: URL validation (most expensive — run last)
-    ok, reason = validate_url(item.get("apply_link", ""), item.get("source", ""))
+    ok, reason = validate_url(item.get("apply_link", ""), item.get("source", ""), check_liveness=check_liveness)
     if not ok:
         failures.append(f"[URL] {reason}")
     else:

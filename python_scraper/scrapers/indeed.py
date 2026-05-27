@@ -1,8 +1,9 @@
 import logging
 import random
-import time
+import asyncio
+import re
+from datetime import datetime, timedelta
 from bs4 import BeautifulSoup
-from playwright.sync_api import sync_playwright
 from python_scraper.scrapers.base_scraper import BaseScraper
 from python_scraper.config import (
     PAGES_TO_SCRAPE,
@@ -19,124 +20,145 @@ class IndeedScraper(BaseScraper):
     def __init__(self):
         super().__init__("Indeed India")
 
-    def scrape_live(self) -> list[dict]:
-        """
-        Scrapes live technical internships from Indeed India.
-        Uses Playwright for dynamic browser rendering, anti-bot handling, and human-like delays.
-        """
-        results = []
-        query = "data+analyst+internship"
-        logger.info(f"[Indeed India] Launching Playwright to scrape.")
+    async def scrape_page(self, browser_context, query: str, page_num: int) -> list[dict]:
+        """Scrapes a single page of Indeed India asynchronously."""
+        start = page_num * 10
+        url = f"https://in.indeed.com/jobs?q={query}&l=India&start={start}"
+        logger.info(f"[Indeed India] Initiating scrape page {page_num + 1}: {url}")
         
-        try:
-            with sync_playwright() as p:
-                browser = p.chromium.launch(
-                    headless=PLAYWRIGHT_HEADLESS,
-                    slow_mo=PLAYWRIGHT_SLOW_MO,
-                )
+        # Throttling delay to avoid rate limits
+        await asyncio.sleep(random.uniform(0.1, 1.5))
+        
+        page = await browser_context.new_page()
+        await page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+        
+        # Route to block heavy resources
+        async def block_resources(route):
+            if route.request.resource_type in ["image", "media", "font"]:
+                await route.abort()
+            elif any(track in route.request.url for track in ["analytics", "google-analytics", "doubleclick"]):
+                await route.abort()
+            else:
+                await route.continue_()
                 
-                user_agent = random.choice(USER_AGENTS)
-                context = browser.new_context(
-                    user_agent=user_agent,
-                    viewport=PLAYWRIGHT_VIEWPORT,
-                    extra_http_headers={
-                        "Accept-Language": "en-US,en;q=0.9",
-                    }
-                )
-                
-                for page_num in range(PAGES_TO_SCRAPE):
-                    start = page_num * 10
-                    url = f"https://in.indeed.com/jobs?q={query}&l=India&start={start}"
-                    logger.info(f"[Indeed India] Navigating to page {page_num + 1}: {url}")
-                    
-                    page = context.new_page()
-                    page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-                    
-                    try:
-                        page.goto(url, timeout=PLAYWRIGHT_TIMEOUT)
-                        page.wait_for_load_state("networkidle")
-                        
-                        time.sleep(random.uniform(3.0, 6.0))
-                        
-                        logger.info(f"[Indeed India] Simulating human scroll on page {page_num + 1}...")
-                        for _ in range(2):
-                            scroll_distance = random.randint(400, 800)
-                            page.evaluate(f"window.scrollBy(0, {scroll_distance})")
-                            time.sleep(random.uniform(1.0, 2.0))
-                        
-                        try:
-                            page.wait_for_selector('.job_seen_beacon', timeout=10000)
-                        except Exception:
-                            logger.warning(f"[Indeed India] Selector '.job_seen_beacon' not found on page {page_num + 1}. IP might be blocked or Cloudflare challenge active.")
-                        
-                        html = page.content()
-                        soup = BeautifulSoup(html, 'html.parser')
-                        job_cards = soup.select('.job_seen_beacon')
-                        
-                        logger.info(f"[Indeed India] Found {len(job_cards)} job cards on page {page_num + 1}.")
-                        
-                        if not job_cards:
-                            logger.warning(f"[Indeed India] No job cards found on page {page_num + 1}. Saving debug artifacts.")
-                            self.save_debug_artifacts(page, f"indeed_p{page_num+1}")
-                            break
-                            
-                        for card in job_cards:
-                            try:
-                                role_el = card.select_one('h2.jobTitle a') or card.select_one('h2.jobTitle span')
-                                role = ""
-                                apply_link = ""
-                                
-                                if role_el:
-                                    role = role_el.text.strip()
-                                    if 'href' in role_el.attrs:
-                                        apply_link = f"https://in.indeed.com{role_el['href']}"
-                                        
-                                company_el = card.select_one('[data-testid="company-name"]') or card.select_one('.companyName')
-                                company_name = company_el.text.strip() if company_el else ""
-                                
-                                location_el = card.select_one('[data-testid="text-location"]') or card.select_one('.companyLocation')
-                                location = location_el.text.strip() if location_el else "India"
-                                
-                                stipend = ""
-                                salary_el = card.select_one('.salary-snippet-container') or card.select_one('.metadata.salarySnippet')
-                                if salary_el:
-                                    stipend = salary_el.text.strip()
-                                    
-                                skills = []
-                                desc_el = card.select_one('.job-snippet')
-                                if desc_el:
-                                    desc_text = desc_el.text.lower()
-                                    for kw in ["python", "sql", "aws", "react", "javascript", "node", "django", "flask", "ml", "ai"]:
-                                        if kw in desc_text:
-                                            skills.append(kw.capitalize())
-                                            
-                                skills_str = ", ".join(skills) if skills else ""
-                                duration = ""
-                                
-                                if role and company_name and apply_link:
-                                    results.append({
-                                        "company_name": company_name,
-                                        "role": role,
-                                        "stipend": stipend,
-                                        "location": location,
-                                        "duration": duration,
-                                        "skills": skills_str,
-                                        "apply_link": apply_link,
-                                        "source": "Indeed India"
-                                    })
-                            except Exception as e:
-                                logger.error(f"[Indeed India] Error parsing card details: {e}")
-                                continue
-                    except Exception as e:
-                        logger.error(f"[Indeed India] Error loading page {page_num + 1}: {e}")
-                        self.save_debug_artifacts(page, f"indeed_error_p{page_num+1}")
-                    finally:
-                        page.close()
-                        
-                browser.close()
-        except Exception as e:
-            logger.error(f"[Indeed India] Playwright scraping failed: {e}", exc_info=True)
-            return []
-            
-        return results
+        await page.route("**/*", block_resources)
 
+        page_results = []
+        try:
+            await page.goto(url, timeout=PLAYWRIGHT_TIMEOUT)
+            await page.wait_for_load_state("networkidle")
+            
+            await asyncio.sleep(random.uniform(1.0, 2.5))
+            
+            # Scroll dynamically
+            for _ in range(2):
+                scroll_distance = random.randint(300, 600)
+                await page.evaluate(f"window.scrollBy(0, {scroll_distance})")
+                await asyncio.sleep(random.uniform(0.3, 0.7))
+            
+            try:
+                await page.wait_for_selector('.job_seen_beacon', timeout=5000)
+            except Exception:
+                logger.warning(f"[Indeed India] Selector '.job_seen_beacon' not found on page {page_num + 1}.")
+            
+            html = await page.content()
+            soup = BeautifulSoup(html, 'html.parser')
+            job_cards = soup.select('.job_seen_beacon')
+            
+            logger.info(f"[Indeed India] Found {len(job_cards)} job cards on page {page_num + 1}.")
+            
+            if not job_cards:
+                logger.warning(f"[Indeed India] No job cards found on page {page_num + 1}. Saving screenshot.")
+                try:
+                    await page.screenshot(path=f"debug_screenshots/indeed_empty_p{page_num+1}.png")
+                except Exception as screenshot_err:
+                    logger.debug(f"[Indeed India] Screenshot fail: {screenshot_err}")
+                return []
+                
+            for card in job_cards:
+                try:
+                    role_el = card.select_one('h2.jobTitle a') or card.select_one('h2.jobTitle span')
+                    role = ""
+                    apply_link = ""
+                    
+                    if role_el:
+                        role = role_el.text.strip()
+                        if 'href' in role_el.attrs:
+                            apply_link = f"https://in.indeed.com{role_el['href']}"
+                            
+                    company_el = card.select_one('[data-testid="company-name"]') or card.select_one('.companyName')
+                    company_name = company_el.text.strip() if company_el else ""
+                    
+                    location_el = card.select_one('[data-testid="text-location"]') or card.select_one('.companyLocation')
+                    location = location_el.text.strip() if location_el else "India"
+                    
+                    stipend = ""
+                    salary_el = card.select_one('.salary-snippet-container') or card.select_one('.metadata.salarySnippet')
+                    if salary_el:
+                        stipend = salary_el.text.strip()
+                        
+                    skills = []
+                    desc_el = card.select_one('.job-snippet')
+                    if desc_el:
+                        desc_text = desc_el.text.lower()
+                        for kw in ["python", "sql", "aws", "react", "javascript", "node", "django", "flask", "ml", "ai"]:
+                            if kw in desc_text:
+                                skills.append(kw.capitalize())
+                                
+                    skills_str = ", ".join(skills) if skills else ""
+                    duration = ""
+                    
+                    # Parse relative time from text (look for elements containing 'posted' or 'ago')
+                    posted_at = datetime.utcnow()
+                    card_text = card.text.lower()
+                    
+                    # Look for date patterns
+                    match = re.search(r'(?:active|posted)\s+(\d+)\s+day', card_text)
+                    if match:
+                        days = int(match.group(1))
+                        posted_at = datetime.utcnow() - timedelta(days=days)
+                    elif "yesterday" in card_text:
+                        posted_at = datetime.utcnow() - timedelta(days=1)
+                    
+                    if role and company_name and apply_link:
+                        page_results.append({
+                            "company_name": company_name,
+                            "role": role,
+                            "stipend": stipend,
+                            "location": location,
+                            "duration": duration,
+                            "skills": skills_str,
+                            "apply_link": apply_link,
+                            "source": "Indeed India",
+                            "posted_at": posted_at.strftime("%Y-%m-%d %H:%M:%S")
+                        })
+                except Exception as e:
+                    logger.error(f"[Indeed India] Error parsing card details: {e}")
+                    continue
+        except Exception as e:
+            logger.error(f"[Indeed India] Error loading page {page_num + 1}: {e}")
+        finally:
+            await page.close()
+            
+        return page_results
+
+    async def scrape_live(self, browser_context) -> list[dict]:
+        """
+        Scrapes live technical internships from Indeed India by paginating in parallel.
+        """
+        query = "data+analyst+internship"
+        logger.info("[Indeed India] Starting parallel page scraping...")
+        
+        tasks = []
+        for page_num in range(PAGES_TO_SCRAPE):
+            tasks.append(self.scrape_page(browser_context, query, page_num))
+            
+        results_batches = await asyncio.gather(*tasks)
+        
+        # Flatten results list
+        all_results = []
+        for batch in results_batches:
+            all_results.extend(batch)
+            
+        logger.info(f"[Indeed India] Total extracted raw listings: {len(all_results)}")
+        return all_results

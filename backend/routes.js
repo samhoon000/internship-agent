@@ -38,7 +38,7 @@ async function getCachedInternships() {
   const now = Date.now();
   if (dbCache.data.length === 0 || !dbCache.lastUpdated || (now - dbCache.lastUpdated > 30000)) {
     try {
-      const [rows] = await pool.query('SELECT * FROM internships ORDER BY created_at DESC');
+      const [rows] = await pool.query('SELECT * FROM internships ORDER BY COALESCE(posted_at, created_at) DESC');
       
       // Process rows to include parsed numeric stipends and clean skills array
       dbCache.data = rows.map(row => {
@@ -189,13 +189,13 @@ router.get('/internships', async (req, res) => {
     // Date Posted filter
     if (datePosted) {
       if (datePosted === 'today') {
-        queryParts.push('created_at >= NOW() - INTERVAL 1 DAY');
+        queryParts.push('COALESCE(posted_at, created_at) >= NOW() - INTERVAL 1 DAY');
       } else if (datePosted === '3days') {
-        queryParts.push('created_at >= NOW() - INTERVAL 3 DAY');
+        queryParts.push('COALESCE(posted_at, created_at) >= NOW() - INTERVAL 3 DAY');
       } else if (datePosted === '7days') {
-        queryParts.push('created_at >= NOW() - INTERVAL 7 DAY');
+        queryParts.push('COALESCE(posted_at, created_at) >= NOW() - INTERVAL 7 DAY');
       } else if (datePosted === '30days') {
-        queryParts.push('created_at >= NOW() - INTERVAL 30 DAY');
+        queryParts.push('COALESCE(posted_at, created_at) >= NOW() - INTERVAL 30 DAY');
       }
     }
 
@@ -206,11 +206,11 @@ router.get('/internships', async (req, res) => {
     }
 
     // Sort mapping
-    let orderClause = 'ORDER BY created_at DESC';
+    let orderClause = 'ORDER BY COALESCE(posted_at, created_at) DESC';
     if (sort === 'stipend') {
-      orderClause = 'ORDER BY stipend_numeric DESC, created_at DESC';
+      orderClause = 'ORDER BY stipend_numeric DESC, COALESCE(posted_at, created_at) DESC';
     } else if (sort === 'legitimacy') {
-      orderClause = 'ORDER BY legitimacy_score DESC, created_at DESC';
+      orderClause = 'ORDER BY legitimacy_score DESC, COALESCE(posted_at, created_at) DESC';
     } else if (sort === 'recently_added') {
       orderClause = 'ORDER BY created_at DESC';
     }
@@ -515,11 +515,11 @@ router.post('/scrapers/run', (req, res) => {
   scraperStatus = 'running';
   scraperLogs = [`[${new Date().toISOString()}] Launching AI Discovery Scrapers...\n`];
 
-  console.log('[Scraper] Triggering python python_scraper/app.py --run-now');
+  console.log('[Scraper] Triggering python run.py');
   
   // Spawn Python scraper process
   const pythonCmd = 'python';
-  const args = ['python_scraper/app.py', '--run-now'];
+  const args = ['run.py'];
   
   // Set working directory to ROOT_DIR so python module resolving behaves correctly
   activeScraperProcess = spawn(pythonCmd, args, {

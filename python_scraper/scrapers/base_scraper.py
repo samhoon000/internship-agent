@@ -55,16 +55,16 @@ class BaseScraper(ABC):
 
 
     @abstractmethod
-    def scrape_live(self) -> list[dict]:
+    async def scrape_live(self, browser_context) -> list[dict]:
         """Performs the live web scraping logic. Returns a list of raw internship dictionaries."""
         pass
 
-    def scrape(self) -> list[dict]:
+    async def scrape(self, browser_context) -> list[dict]:
         """
         Public orchestrator:
         1. Attempts to scrape live data.
         2. If live scraping fails or is blocked, returns [].
-        3. Standardizes columns, applies the 5-stage validation pipeline, and calculates legitimacy score.
+        3. Standardizes columns, applies the 5-stage validation pipeline (skipping HTTP liveness check), and calculates legitimacy score.
         4. Performs Quality Assurance checks (detecting scoring bugs or synthetic data).
         """
         logger.info(f"[{self.source_name}] Initiating live scraping process...")
@@ -81,7 +81,7 @@ class BaseScraper(ABC):
         self.blocked = False
 
         try:
-            raw_results = self.scrape_live()
+            raw_results = await self.scrape_live(browser_context)
         except Exception as e:
             logger.error(f"[{self.source_name}] Critical error during live scraping: {e}", exc_info=True)
 
@@ -97,8 +97,8 @@ class BaseScraper(ABC):
             # 1. Clean & Standardize
             cleaned = clean_internship(item)
             
-            # 2. Run through the strict 5-stage validation pipeline
-            is_valid, validation_reasons = run_validation_pipeline(cleaned)
+            # 2. Run through the strict 5-stage validation pipeline (without slow sync HEAD checks)
+            is_valid, validation_reasons = run_validation_pipeline(cleaned, check_liveness=False)
             if not is_valid:
                 logger.warning(f"[{self.source_name}] Internship at '{cleaned.get('company_name')}' failed validation pipeline:")
                 for reason in validation_reasons:
@@ -140,13 +140,11 @@ class BaseScraper(ABC):
 
         # ── QUALITY ASSURANCE CHECK ──
         if processed_results:
-            # QA 1: >80% internships score 100 check
             hundred_scores = sum(1 for item in processed_results if item['legitimacy_score'] == 100)
             percentage_hundred = (hundred_scores / len(processed_results)) * 100
             if percentage_hundred > 80:
                 logger.warning(f"[{self.source_name}] QA WARNING: Potential scoring bug detected. {percentage_hundred:.1f}% of internships scored exactly 100.")
             
-            # QA 2: Same patterns repeating check (Synthetic Data Issue)
             roles = [item['role'].lower() for item in processed_results]
             companies = [item['company_name'].lower() for item in processed_results]
             skills_list = [item['skills'].lower() for item in processed_results]

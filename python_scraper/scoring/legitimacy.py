@@ -194,6 +194,9 @@ def _infer_company_domain(company_name: str) -> str:
     return f"{parts[0]}.com"
 
 
+from functools import lru_cache
+
+@lru_cache(maxsize=1024)
 def _quick_dns_check(domain: str) -> bool:
     """Returns True if the domain resolves via DNS (fast, 2s timeout)."""
     try:
