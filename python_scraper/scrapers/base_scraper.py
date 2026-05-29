@@ -59,7 +59,7 @@ class BaseScraper(ABC):
         """Performs the live web scraping logic. Returns a list of raw internship dictionaries."""
         pass
 
-    async def scrape(self, browser_context) -> list[dict]:
+    async def scrape(self, browser_context=None) -> list[dict]:
         """
         Public orchestrator:
         1. Attempts to scrape live data.
@@ -80,10 +80,39 @@ class BaseScraper(ABC):
         self.score_below_threshold = 0
         self.blocked = False
 
+        local_playwright = None
+        local_browser = None
+        local_context = None
+
         try:
+            if browser_context is None:
+                from playwright.async_api import async_playwright
+                from python_scraper.config import PLAYWRIGHT_HEADLESS
+                logger.info(f"[{self.source_name}] No shared browser context provided. Launching local Playwright instance.")
+                local_playwright = await async_playwright().start()
+                local_browser = await local_playwright.chromium.launch(headless=PLAYWRIGHT_HEADLESS)
+                local_context = await local_browser.new_context()
+                browser_context = local_context
+
             raw_results = await self.scrape_live(browser_context)
         except Exception as e:
             logger.error(f"[{self.source_name}] Critical error during live scraping: {e}", exc_info=True)
+        finally:
+            if local_context:
+                try:
+                    await local_context.close()
+                except Exception as e:
+                    logger.error(f"[{self.source_name}] Error closing local context: {e}")
+            if local_browser:
+                try:
+                    await local_browser.close()
+                except Exception as e:
+                    logger.error(f"[{self.source_name}] Error closing local browser: {e}")
+            if local_playwright:
+                try:
+                    await local_playwright.stop()
+                except Exception as e:
+                    logger.error(f"[{self.source_name}] Error stopping local playwright: {e}")
 
         if not raw_results:
             logger.warning(f"[{self.source_name}] Live scraper returned 0 items. No internships retrieved.")

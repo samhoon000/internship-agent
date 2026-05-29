@@ -190,6 +190,10 @@ def validate_role_quality(role: str) -> tuple[bool, str]:
         return False, "role is empty"
 
     role_lower = role.strip().lower()
+    # Normalize separators (replace hyphens, slashes, brackets, etc. with space) for fuzzy matching
+    role_norm = re.sub(r'[-/_+:,()\[\]\s]+', ' ', role_lower)
+    role_norm = ' '.join(role_norm.split())
+
     score = 0
     matched_whitelist = []
     matched_context = []
@@ -205,26 +209,39 @@ def validate_role_quality(role: str) -> tuple[bool, str]:
     # 1. Whitelist matches (sorted by length descending to prevent double-counting)
     sorted_whitelist = sorted(ROLE_WHITELIST_KEYWORDS, key=len, reverse=True)
     for kw in sorted_whitelist:
-        if matches_keyword(kw, role_lower):
+        if matches_keyword(kw, role_lower) or matches_keyword(kw, role_norm):
             if not any(kw in matched for matched in matched_whitelist):
                 matched_whitelist.append(kw)
 
     # 2. Context matches (only if not a substring of a matched whitelist term)
     for kw in ROLE_CONTEXT_KEYWORDS:
-        if matches_keyword(kw, role_lower):
+        if matches_keyword(kw, role_lower) or matches_keyword(kw, role_norm):
             if not any(kw in matched for matched in matched_whitelist):
                 matched_context.append(kw)
 
-    # Context presence flag (if any whitelist or context keyword matched)
-    context_present = len(matched_whitelist) > 0 or len(matched_context) > 0
+    # 2.5 Auto Boost matching
+    boost_keywords = [
+        "data", "analytics", "analyst", "sql", "python", "machine learning",
+        "business intelligence", "research", "statistics", "excel", "power bi", "tableau", "bi"
+    ]
+    matched_boost = []
+    for kw in boost_keywords:
+        if matches_keyword(kw, role_lower) or matches_keyword(kw, role_norm):
+            if kw not in matched_boost:
+                matched_boost.append(kw)
+    has_boost = len(matched_boost) > 0
+    boost_score = 50 if has_boost else 0
+
+    # Context presence flag (if any whitelist, context, or boost keyword matched)
+    context_present = len(matched_whitelist) > 0 or len(matched_context) > 0 or has_boost
 
     # 3. Exclusions
     for kw in ROLE_HARD_EXCLUDE_KEYWORDS:
-        if matches_keyword(kw, role_lower):
+        if matches_keyword(kw, role_lower) or matches_keyword(kw, role_norm):
             matched_hard_exclude.append(kw)
 
     for kw in ROLE_SOFT_EXCLUDE_KEYWORDS:
-        if matches_keyword(kw, role_lower):
+        if matches_keyword(kw, role_lower) or matches_keyword(kw, role_norm):
             matched_soft_exclude.append(kw)
 
     # 4. Calculate score
@@ -234,6 +251,9 @@ def validate_role_quality(role: str) -> tuple[bool, str]:
     hard_exclude_penalty = 0
     for kw in matched_hard_exclude:
         penalty = 10 if context_present else 25
+        # Marketing rule: if marketing, but ALSO contains data or analytics, weaken the penalty
+        if kw == "marketing" and ("data" in role_norm or "analytics" in role_norm):
+            penalty = 5
         hard_exclude_penalty += penalty
 
     soft_exclude_penalty = 0
@@ -241,16 +261,29 @@ def validate_role_quality(role: str) -> tuple[bool, str]:
         penalty = 5 if context_present else 15
         soft_exclude_penalty += penalty
 
-    score = whitelist_score + context_score - hard_exclude_penalty - soft_exclude_penalty
+    score = whitelist_score + context_score + boost_score - hard_exclude_penalty - soft_exclude_penalty
 
-    threshold = 10
+    threshold = 5
     passed = score >= threshold
     decision = "PASSED" if passed else "FAILED"
 
+    # Add logging tags for verification
+    if passed:
+        if matched_whitelist:
+            passed_reason = "PASSED_BY_KEYWORD"
+        else:
+            passed_reason = "PASSED_BY_CONTEXT"
+    else:
+        if matched_hard_exclude:
+            passed_reason = "REJECTED_HARD_EXCLUSION"
+        else:
+            passed_reason = "REJECTED_LOW_SCORE"
+
     reason = (
-        f"Role quality check {decision} with score {score} (threshold: {threshold}).\n"
+        f"Role quality check {decision} ({passed_reason}) with score {score} (threshold: {threshold}).\n"
         f"  - Whitelist Matches (+30/ea): {matched_whitelist} -> +{whitelist_score}\n"
         f"  - Context Matches (+15/ea): {matched_context} -> +{context_score}\n"
+        f"  - Boost Matches (+50): {matched_boost} -> +{boost_score}\n"
         f"  - Hard Exclusions (-25 or -10/ea): {matched_hard_exclude} -> -{hard_exclude_penalty} (context present: {context_present})\n"
         f"  - Soft Exclusions (-15 or -5/ea): {matched_soft_exclude} -> -{soft_exclude_penalty} (context present: {context_present})"
     )

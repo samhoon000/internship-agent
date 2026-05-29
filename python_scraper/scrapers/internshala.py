@@ -150,23 +150,24 @@ class InternshalaScraper(BaseScraper):
         """
         Navigates to a URL with exponential backoff retry and navigation failure recovery.
         """
-        backoff = 2.0
-        for attempt in range(1, max_retries + 1):
+        delays = [2.0, 5.0, 10.0]
+        total_attempts = 1 + len(delays)
+        for attempt in range(1, total_attempts + 1):
             try:
                 start_time = asyncio.get_event_loop().time()
                 response = await page.goto(url, wait_until="domcontentloaded", timeout=PLAYWRIGHT_TIMEOUT)
                 elapsed = asyncio.get_event_loop().time() - start_time
                 if response and response.status == 200:
-                    logger.info(f"[Internshala] Navigation successful in {elapsed:.2f}s (Attempt {attempt}/{max_retries}).")
+                    logger.info(f"[Internshala] Navigation successful in {elapsed:.2f}s (Attempt {attempt}/{total_attempts}).")
                     return True
                 else:
                     status = response.status if response else 'None'
-                    logger.warning(f"[Internshala] Navigation status code {status} for {url} (Attempt {attempt}/{max_retries}).")
+                    logger.warning(f"[Internshala] Navigation status code {status} for {url} (Attempt {attempt}/{total_attempts}).")
             except Exception as e:
-                logger.warning(f"[Internshala] Navigation failed on attempt {attempt}/{max_retries}: {e}")
+                logger.warning(f"[Internshala] Navigation failed on attempt {attempt}/{total_attempts}: {e}")
             
-            if attempt < max_retries:
-                sleep_time = backoff ** attempt + random.uniform(0.5, 1.5)
+            if attempt < total_attempts:
+                sleep_time = delays[attempt - 1]
                 logger.info(f"[Internshala] Retrying in {sleep_time:.2f}s...")
                 await asyncio.sleep(sleep_time)
         return False
@@ -301,8 +302,8 @@ class InternshalaScraper(BaseScraper):
         url = f"https://internshala.com/internships/{cat}/page-{page_num}/"
         logger.info(f"[Internshala] [Category: {cat} | Page {page_num}] Initiating scrape page: {url}")
         
-        # Throttling delay to prevent spamming
-        await asyncio.sleep(random.uniform(0.1, 1.2))
+        # Throttling delay to prevent spamming / anti-bot
+        await asyncio.sleep(random.uniform(1.0, 2.5))
         
         page = await browser_context.new_page()
         await page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
@@ -351,13 +352,19 @@ class InternshalaScraper(BaseScraper):
             "machine-learning-internship",
         ]
 
-        logger.info("[Internshala] Starting parallel scraping for categories...")
+        logger.info("[Internshala] Starting parallel scraping for categories with Semaphore(2)...")
+        semaphore = asyncio.Semaphore(2)
+
+        async def sem_scrape(cat, page_num):
+            async with semaphore:
+                return await self.scrape_page(browser_context, cat, page_num)
+
         tasks = []
         
         # Add tasks for categories and pages to scrape concurrently
         for cat in categories:
             for page_num in range(1, PAGES_TO_SCRAPE + 1):
-                tasks.append(self.scrape_page(browser_context, cat, page_num))
+                tasks.append(sem_scrape(cat, page_num))
 
         results_batches = await asyncio.gather(*tasks)
         

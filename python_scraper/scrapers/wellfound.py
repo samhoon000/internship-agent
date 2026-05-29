@@ -31,11 +31,9 @@ class WellfoundScraper(BaseScraper):
         page = await browser_context.new_page()
         await page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         
-        # Route to block heavy resources
+        # Route to block heavy resources (allow script, xhr, fetch)
         async def block_resources(route):
             if route.request.resource_type in ["image", "media", "font"]:
-                await route.abort()
-            elif any(track in route.request.url for track in ["analytics", "google-analytics", "doubleclick"]):
                 await route.abort()
             else:
                 await route.continue_()
@@ -55,20 +53,32 @@ class WellfoundScraper(BaseScraper):
                 await page.evaluate(f"window.scrollBy(0, {scroll_distance})")
                 await asyncio.sleep(random.uniform(0.5, 1.2))
             
+            # Use generous wait strategy for resilient selectors
             try:
                 await page.wait_for_selector(
-                    '[data-test="StartupResult"], [data-test="JobSearchResultCard"], .styles_jobCard__, .styles_result__, [class*="styles_result__"], [class*="styles_jobCard__"]',
-                    timeout=5000
+                    '[data-test="StartupResult"], [data-test="JobSearchResultCard"], [data-testid*="job"], [data-test*="Job"], .styles_jobCard__, .styles_result__, [class*="styles_result__"], [class*="styles_jobCard__"]',
+                    timeout=10000
                 )
             except Exception:
                 logger.warning("[Wellfound] Selector fallbacks not found. Page might have blocked requests or structure changed.")
             
             html = await page.content()
+            try:
+                import os
+                os.makedirs("debug_html", exist_ok=True)
+                with open("debug_html/debug_wellfound.html", "w", encoding="utf-8") as f:
+                    f.write(html)
+                logger.info("[Wellfound] Saved debug page HTML to debug_html/debug_wellfound.html")
+            except Exception as e:
+                logger.debug(f"[Wellfound] Failed to write debug HTML: {e}")
+
             soup = BeautifulSoup(html, 'html.parser')
             
             job_cards = (
                 soup.select('[data-test="StartupResult"]') or 
                 soup.select('[data-test="JobSearchResultCard"]') or 
+                soup.select('[data-testid*="job"]') or 
+                soup.select('[data-test*="Job"]') or 
                 soup.select('.styles_jobCard__') or 
                 soup.select('.styles_result__') or
                 soup.select('[class*="styles_result__"]') or 
@@ -88,16 +98,24 @@ class WellfoundScraper(BaseScraper):
                 try:
                     role_el = (
                         card.select_one('[data-test="job-name"]') or 
+                        card.select_one('[data-test="job-title"]') or 
+                        card.select_one('[data-testid*="job"]') or 
+                        card.select_one('[data-test*="job"]') or 
                         card.select_one('.styles_title__') or 
-                        card.select_one('[data-test="job-title"]') or
-                        card.select_one('a[href*="/jobs/"]')
+                        card.select_one('a[href*="/jobs/"]') or
+                        card.select_one('[class*="job-title"]') or
+                        card.select_one('[class*="job-name"]')
                     )
                     role = role_el.text.strip() if role_el else ""
                     
                     company_el = (
                         card.select_one('[data-test="startup-name"]') or 
-                        card.select_one('.styles_name__') or 
-                        card.select_one('[data-test="company-name"]')
+                        card.select_one('[data-test="company-name"]') or 
+                        card.select_one('[data-testid*="company"]') or 
+                        card.select_one('[data-test*="company"]') or 
+                        card.select_one('.styles_name__') or
+                        card.select_one('[class*="company-name"]') or
+                        card.select_one('[class*="startup-name"]')
                     )
                     company_name = company_el.text.strip() if company_el else ""
                     

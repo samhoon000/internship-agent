@@ -25,9 +25,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger("python_scraper.app")
 
-def run_agent_cycle():
+async def run_agent_cycle():
     """Runs a single iteration of all scraper modules and logs consolidated metrics."""
     logger.info("=== Starting AI Internship Discovery Cycle ===")
+    
+    from playwright.async_api import async_playwright
+    from python_scraper.config import USER_AGENTS, PLAYWRIGHT_VIEWPORT
+    import random
+    import asyncio
     
     scrapers = [
         InternshalaScraper(),
@@ -38,14 +43,36 @@ def run_agent_cycle():
     
     all_scraped_items = []
     
-    for scraper in scrapers:
-        try:
+    async with async_playwright() as p:
+        logger.info("Launching headless Chromium browser instance...")
+        browser = await p.chromium.launch(headless=True)
+        browser_context = await browser.new_context(
+            user_agent=random.choice(USER_AGENTS),
+            viewport=PLAYWRIGHT_VIEWPORT,
+            extra_http_headers={"Accept-Language": "en-US,en;q=0.9"}
+        )
+        
+        async def run_single_scraper(scraper):
+            try:
+                data = await scraper.scrape(browser_context)
+                logger.info(f"{scraper.source_name} successfully yielded {len(data)} items.")
+                return data
+            except Exception as e:
+                logger.error(f"Scraper failed: {scraper.source_name}. Reason: {e}", exc_info=True)
+                return []
+
+        # Log triggering in order
+        for scraper in scrapers:
             logger.info(f"Triggering {scraper.source_name} scraping sequence...")
-            data = scraper.scrape()
+            
+        # Run all scrapers concurrently
+        results = await asyncio.gather(*(run_single_scraper(s) for s in scrapers))
+        for data in results:
             all_scraped_items.extend(data)
-            logger.info(f"{scraper.source_name} successfully yielded {len(data)} items.")
-        except Exception as e:
-            logger.error(f"Scraper failed: {scraper.source_name}. Reason: {e}", exc_info=True)
+            
+        await browser_context.close()
+        await browser.close()
+        logger.info("Headless Chromium browser instance closed successfully.")
             
     # Calculate consolidated production metrics
     total_scraped = sum(s.scraped_count for s in scrapers)
@@ -98,13 +125,19 @@ Inserted into SQL: {added}
     return added, updated, skipped
 
 
+def run_agent_cycle_sync():
+    """Synchronous wrapper around the async run_agent_cycle for scheduler and CLI execution."""
+    import asyncio
+    return asyncio.run(run_agent_cycle())
+
+
 def start_scheduler():
     """Initializes and blocks on the background scheduler to run the agent daily."""
     logger.info("Scheduler starting...")
     scheduler = BlockingScheduler()
     
     # Schedule agent to run every 24 hours (once daily)
-    scheduler.add_job(run_agent_cycle, 'interval', hours=24, next_run_time=None)
+    scheduler.add_job(run_agent_cycle_sync, 'interval', hours=24, next_run_time=None)
     
     logger.info("Scheduler initialized. Scraper agent scheduled to run automatically once daily (every 24 hours).")
     logger.info("Press Ctrl+C to terminate.")
@@ -143,20 +176,20 @@ Commands to execute details:
     )
     
     args = parser.parse_args()
-
+ 
     # Initializing database tables automatically on any script execute
     init_db()
-
+ 
     if args.run_now:
         logger.info("Manual execution triggered via --run-now flag.")
-        added, updated, skipped = run_agent_cycle()
+        added, updated, skipped = run_agent_cycle_sync()
         print(f"\nExecution stats:\n- Added: {added}\n- Updated: {updated}\n- Skipped/Unchanged: {skipped}")
         
     elif args.scheduler:
         logger.info("Automatic scheduler mode triggered via --scheduler flag.")
         # Perform an initial run immediately so database has listings right away, then start scheduler
         logger.info("Running initial setup scraping cycle...")
-        run_agent_cycle()
+        run_agent_cycle_sync()
         start_scheduler()
         
     else:
