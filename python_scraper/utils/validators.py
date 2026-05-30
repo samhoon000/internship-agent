@@ -18,6 +18,7 @@ import logging
 import socket
 import requests
 from urllib.parse import urlparse
+from rapidfuzz import fuzz
 
 from python_scraper.config import (
     SOURCE_DOMAIN_MAP,
@@ -36,7 +37,7 @@ logger = logging.getLogger("python_scraper.validators")
 # STAGE 1 — URL VALIDATION
 # ─────────────────────────────────────────────────────────────────────
 
-def validate_url(apply_link: str, source: str, check_liveness: bool = True) -> tuple[bool, str]:
+def validate_url(apply_link: str, source: str, check_liveness: bool = True) -> tuple[bool, str, str]:
     """
     Validates that the apply_link:
       - starts with https://
@@ -45,13 +46,13 @@ def validate_url(apply_link: str, source: str, check_liveness: bool = True) -> t
       - is not a dead link, redirect loop, or placeholder
     """
     if not apply_link or not apply_link.strip():
-        return False, "apply_link is empty"
+        return False, "apply_link is empty", ""
 
     link = apply_link.strip()
 
     # Must start with https://
     if not link.startswith("https://"):
-        return False, f"apply_link does not start with https:// -> {link}"
+        return False, f"apply_link does not start with https:// -> {link}", ""
 
     # Domain must match source
     allowed_domains = SOURCE_DOMAIN_MAP.get(source, [])
@@ -60,7 +61,7 @@ def validate_url(apply_link: str, source: str, check_liveness: bool = True) -> t
         hostname = parsed.hostname or ""
         domain_match = any(domain in hostname for domain in allowed_domains)
         if not domain_match:
-            return False, f"apply_link domain '{hostname}' does not match source '{source}' (expected: {allowed_domains})"
+            return False, f"apply_link domain '{hostname}' does not match source '{source}' (expected: {allowed_domains})", ""
 
     # Reject obvious placeholder URLs
     placeholder_slugs = [
@@ -70,40 +71,41 @@ def validate_url(apply_link: str, source: str, check_liveness: bool = True) -> t
     link_lower = link.lower()
     for slug in placeholder_slugs:
         if slug in link_lower:
-            return False, f"apply_link contains placeholder slug: '{slug}'"
+            return False, f"apply_link contains placeholder slug: '{slug}'", ""
 
     if not check_liveness:
-        return True, "URL structure is valid"
+        return True, "URL structure is valid", ""
 
-    # HTTP HEAD check for liveness
+    # HTTP GET check for liveness & content retrieval
     try:
-        resp = requests.head(
+        resp = requests.get(
             link,
             timeout=REQUEST_TIMEOUT,
             allow_redirects=True,
             headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
             },
         )
+        html_content = resp.text if resp.status_code == 200 else ""
         if resp.status_code == 200:
-            return True, "URL is live (200)"
+            return True, "URL is live (200)", html_content
         elif 300 <= resp.status_code < 400:
-            return True, f"URL redirects ({resp.status_code}) - accepted"
+            return True, f"URL redirects ({resp.status_code}) - accepted", html_content
         elif resp.status_code == 403:
-            # Some sites block HEAD but page exists; accept with caution
-            return True, "URL returned 403 (may be access-restricted but exists)"
+            # Some sites block GET but page exists; accept with caution
+            return True, "URL returned 403 (may be access-restricted but exists)", html_content
         elif resp.status_code == 404:
-            return False, "URL returned 404 - dead link"
+            return False, "URL returned 404 - dead link", ""
         else:
-            return False, f"URL returned unexpected status {resp.status_code}"
+            return False, f"URL returned unexpected status {resp.status_code}", ""
     except requests.exceptions.TooManyRedirects:
-        return False, "URL has a redirect loop"
+        return False, "URL has a redirect loop", ""
     except requests.exceptions.ConnectionError:
-        return False, "URL connection failed — host unreachable"
+        return False, "URL connection failed — host unreachable", ""
     except requests.exceptions.Timeout:
-        return False, "URL timed out"
+        return False, "URL timed out", ""
     except Exception as e:
-        return False, f"URL check error: {e}"
+        return False, f"URL check error: {e}", ""
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -182,11 +184,13 @@ def _check_dns(domain: str) -> bool:
 # STAGE 3 — ROLE QUALITY
 # ─────────────────────────────────────────────────────────────────────
 
-def validate_role_quality(role: str) -> tuple[bool, str]:
+def validate_role_quality(role: str, item: dict = None) -> tuple[bool, str]:
     """
-    Ensures the role is a legitimate tech/data internship using weighted scoring.
+    Ensures the role is a legitimate tech/data internship using fuzzy keyword matching and weighted confidence tiers.
     """
     if not role or not role.strip():
+        if item is not None:
+            item['confidence'] = 'REJECT'
         return False, "role is empty"
 
     role_lower = role.strip().lower()
@@ -194,7 +198,6 @@ def validate_role_quality(role: str) -> tuple[bool, str]:
     role_norm = re.sub(r'[-/_+:,()\[\]\s]+', ' ', role_lower)
     role_norm = ' '.join(role_norm.split())
 
-    score = 0
     matched_whitelist = []
     matched_context = []
     matched_hard_exclude = []
@@ -204,7 +207,16 @@ def validate_role_quality(role: str) -> tuple[bool, str]:
         if len(keyword) <= 3 and keyword.isalnum():
             pattern = rf"\b{re.escape(keyword)}\b"
             return bool(re.search(pattern, text))
-        return keyword in text
+        
+        # Exact substring match
+        if keyword in text:
+            return True
+            
+        # Fuzzy match using partial ratio (helps match data-analysis to data analysis, etc.)
+        if fuzz.partial_ratio(keyword, text) >= 90:
+            return True
+            
+        return False
 
     # 1. Whitelist matches (sorted by length descending to prevent double-counting)
     sorted_whitelist = sorted(ROLE_WHITELIST_KEYWORDS, key=len, reverse=True)
@@ -213,79 +225,64 @@ def validate_role_quality(role: str) -> tuple[bool, str]:
             if not any(kw in matched for matched in matched_whitelist):
                 matched_whitelist.append(kw)
 
-    # 2. Context matches (only if not a substring of a matched whitelist term)
+    # 2. Context matches
     for kw in ROLE_CONTEXT_KEYWORDS:
         if matches_keyword(kw, role_lower) or matches_keyword(kw, role_norm):
             if not any(kw in matched for matched in matched_whitelist):
                 matched_context.append(kw)
 
-    # 2.5 Auto Boost matching
-    boost_keywords = [
-        "data", "analytics", "analyst", "sql", "python", "machine learning",
-        "business intelligence", "research", "statistics", "excel", "power bi", "tableau", "bi"
-    ]
-    matched_boost = []
-    for kw in boost_keywords:
-        if matches_keyword(kw, role_lower) or matches_keyword(kw, role_norm):
-            if kw not in matched_boost:
-                matched_boost.append(kw)
-    has_boost = len(matched_boost) > 0
-    boost_score = 50 if has_boost else 0
-
-    # Context presence flag (if any whitelist, context, or boost keyword matched)
-    context_present = len(matched_whitelist) > 0 or len(matched_context) > 0 or has_boost
-
     # 3. Exclusions
     for kw in ROLE_HARD_EXCLUDE_KEYWORDS:
         if matches_keyword(kw, role_lower) or matches_keyword(kw, role_norm):
-            matched_hard_exclude.append(kw)
+            # Check if this exclusion is balanced by a strong whitelisted keyword
+            # E.g., "Marketing Analytics Intern" contains hard exclude "marketing" and whitelist "analytics"
+            is_balanced = False
+            for wl in matched_whitelist:
+                if "analytics" in wl or "data" in wl or "science" in wl:
+                    is_balanced = True
+            if not is_balanced:
+                matched_hard_exclude.append(kw)
 
     for kw in ROLE_SOFT_EXCLUDE_KEYWORDS:
         if matches_keyword(kw, role_lower) or matches_keyword(kw, role_norm):
-            matched_soft_exclude.append(kw)
+            is_balanced = False
+            for wl in matched_whitelist:
+                if "analytics" in wl or "data" in wl or "science" in wl:
+                    is_balanced = True
+            if not is_balanced:
+                matched_soft_exclude.append(kw)
 
-    # 4. Calculate score
-    whitelist_score = len(matched_whitelist) * 30
-    context_score = len(matched_context) * 15
+    # 4. Classify confidence tier
+    has_whitelist = len(matched_whitelist) > 0
+    has_hard_exclude = len(matched_hard_exclude) > 0
+    has_soft_exclude = len(matched_soft_exclude) > 0
 
-    hard_exclude_penalty = 0
-    for kw in matched_hard_exclude:
-        penalty = 10 if context_present else 25
-        # Marketing rule: if marketing, but ALSO contains data or analytics, weaken the penalty
-        if kw == "marketing" and ("data" in role_norm or "analytics" in role_norm):
-            penalty = 5
-        hard_exclude_penalty += penalty
-
-    soft_exclude_penalty = 0
-    for kw in matched_soft_exclude:
-        penalty = 5 if context_present else 15
-        soft_exclude_penalty += penalty
-
-    score = whitelist_score + context_score + boost_score - hard_exclude_penalty - soft_exclude_penalty
-
-    threshold = 5
-    passed = score >= threshold
-    decision = "PASSED" if passed else "FAILED"
-
-    # Add logging tags for verification
-    if passed:
-        if matched_whitelist:
-            passed_reason = "PASSED_BY_KEYWORD"
-        else:
-            passed_reason = "PASSED_BY_CONTEXT"
+    if has_hard_exclude:
+        # If there's a hard exclusion that isn't overridden/balanced, reject it
+        confidence = "REJECT"
+    elif has_whitelist and not has_soft_exclude:
+        # Direct whitelist match with no soft exclusions -> HIGH confidence
+        confidence = "HIGH"
+    elif has_whitelist:
+        # Whitelisted but has some soft exclusions -> MEDIUM confidence
+        confidence = "MEDIUM"
     else:
-        if matched_hard_exclude:
-            passed_reason = "REJECTED_HARD_EXCLUSION"
-        else:
-            passed_reason = "REJECTED_LOW_SCORE"
+        # Vague role title without hard exclusions -> NEEDS_RESCUE (which triggers description check)
+        confidence = "NEEDS_RESCUE"
 
+    if item is not None:
+        item['confidence'] = confidence
+
+    # Validation succeeds if confidence is HIGH, MEDIUM, or NEEDS_RESCUE
+    passed = confidence in ["HIGH", "MEDIUM", "NEEDS_RESCUE"]
+    decision = "PASSED" if passed else "FAILED"
+    
     reason = (
-        f"Role quality check {decision} ({passed_reason}) with score {score} (threshold: {threshold}).\n"
-        f"  - Whitelist Matches (+30/ea): {matched_whitelist} -> +{whitelist_score}\n"
-        f"  - Context Matches (+15/ea): {matched_context} -> +{context_score}\n"
-        f"  - Boost Matches (+50): {matched_boost} -> +{boost_score}\n"
-        f"  - Hard Exclusions (-25 or -10/ea): {matched_hard_exclude} -> -{hard_exclude_penalty} (context present: {context_present})\n"
-        f"  - Soft Exclusions (-15 or -5/ea): {matched_soft_exclude} -> -{soft_exclude_penalty} (context present: {context_present})"
+        f"Role quality check {decision} with confidence tier {confidence}.\n"
+        f"  - Whitelist Matches: {matched_whitelist}\n"
+        f"  - Context Matches: {matched_context}\n"
+        f"  - Hard Exclusions: {matched_hard_exclude}\n"
+        f"  - Soft Exclusions: {matched_soft_exclude}"
     )
 
     return passed, reason
@@ -381,7 +378,7 @@ def run_validation_pipeline(item: dict, check_liveness: bool = True) -> tuple[bo
         notes.append(f"[COMPLETENESS] {reason}")
 
     # Stage 2: Role quality
-    ok, reason = validate_role_quality(item.get("role", ""))
+    ok, reason = validate_role_quality(item.get("role", ""), item)
     if not ok:
         failures.append(f"[ROLE] {reason}")
     else:
@@ -402,7 +399,7 @@ def run_validation_pipeline(item: dict, check_liveness: bool = True) -> tuple[bo
         notes.append(f"[PAYMENT] {reason}")
 
     # Stage 5: URL validation (most expensive — run last)
-    ok, reason = validate_url(item.get("apply_link", ""), item.get("source", ""), check_liveness=check_liveness)
+    ok, reason, html = validate_url(item.get("apply_link", ""), item.get("source", ""), check_liveness=check_liveness)
     if not ok:
         failures.append(f"[URL] {reason}")
     else:

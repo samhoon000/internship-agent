@@ -144,21 +144,42 @@ class IndeedScraper(BaseScraper):
 
     async def scrape_live(self, browser_context) -> list[dict]:
         """
-        Scrapes live technical internships from Indeed India by paginating in parallel.
+        Scrapes live technical internships from Indeed India with sequential smart pagination based on duplicate saturation.
         """
         query = "data+analyst+internship"
-        logger.info("[Indeed India] Starting parallel page scraping...")
+        logger.info("[Indeed India] Starting smart sequential page scraping...")
         
-        tasks = []
-        for page_num in range(PAGES_TO_SCRAPE):
-            tasks.append(self.scrape_page(browser_context, query, page_num))
-            
-        results_batches = await asyncio.gather(*tasks)
-        
-        # Flatten results list
         all_results = []
-        for batch in results_batches:
-            all_results.extend(batch)
+        session_seen_links = set()
+        page_num = 0
+        
+        while page_num < 10:  # safety cap of 10 pages
+            page_results = await self.scrape_page(browser_context, query, page_num)
+            if not page_results:
+                logger.info(f"[Indeed India] Page {page_num + 1} returned no listings. Stopping pagination.")
+                break
+                
+            total_items = len(page_results)
+            dup_items = 0
+            
+            for item in page_results:
+                link = item.get('apply_link')
+                if link in self.existing_links or link in session_seen_links:
+                    dup_items += 1
+                else:
+                    session_seen_links.add(link)
+                    
+            all_results.extend(page_results)
+            
+            # Calculate duplicate saturation
+            saturation = dup_items / total_items if total_items > 0 else 0
+            logger.info(f"[Indeed India] [Page {page_num + 1}] Saturation: {saturation:.1%} ({dup_items}/{total_items} duplicate items).")
+            
+            if total_items > 0 and saturation > 0.8:
+                logger.info(f"[Indeed India] Duplicate saturation reached > 80% on page {page_num + 1}. Stopping pagination.")
+                break
+                
+            page_num += 1
             
         logger.info(f"[Indeed India] Total extracted raw listings: {len(all_results)}")
         return all_results

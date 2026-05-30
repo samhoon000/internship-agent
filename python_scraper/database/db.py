@@ -79,6 +79,11 @@ def init_db():
                     conn.execute(text("ALTER TABLE internships ADD COLUMN freshness_score INT DEFAULT 0"))
                     logger.info("[Migration] Column 'freshness_score' added successfully.")
                 
+                if "confidence" not in existing_cols:
+                    logger.info("[Migration] Adding 'confidence' column to 'internships' table...")
+                    conn.execute(text("ALTER TABLE internships ADD COLUMN confidence VARCHAR(50) DEFAULT 'HIGH' NOT NULL"))
+                    logger.info("[Migration] Column 'confidence' added successfully.")
+                
                 conn.commit()
         except Exception as migration_error:
             logger.warning(f"Database startup sequence: Auto-migration of columns failed: {migration_error}")
@@ -127,8 +132,8 @@ def save_internships(internship_dicts, stats_dict=None):
     try:
         # Load all existing links and combos into memory sets
         existing_links = {r[0] for r in session.query(Internship.apply_link).all()}
-        existing_combos = {f"{r[0].lower().strip()}||{r[1].lower().strip()}" 
-                           for r in session.query(Internship.company_name, Internship.role).all() if r[0] and r[1]}
+        existing_combos = {f"{r[0].lower().strip()}||{r[1].lower().strip()}||{(r[2] or '').lower().strip()}" 
+                           for r in session.query(Internship.company_name, Internship.role, Internship.stipend).all() if r[0] and r[1]}
 
         to_insert = []
         
@@ -156,7 +161,7 @@ def save_internships(internship_dicts, stats_dict=None):
                 rejected_low_confidence += 1
                 continue
 
-            combo = f"{company_name.lower()}||{role.lower()}"
+            combo = f"{company_name.lower()}||{role.lower()}||{item.get('stipend', '').lower().strip()}"
 
             # Dedup check
             if apply_link in existing_links or combo in existing_combos:
@@ -203,6 +208,7 @@ def save_internships(internship_dicts, stats_dict=None):
                 "source": source,
                 "legitimacy_score": score,
                 "freshness_score": freshness,
+                "confidence": item.get('confidence', 'HIGH'),
                 "posted_at": posted_at,
                 "created_at": datetime.utcnow()
             }

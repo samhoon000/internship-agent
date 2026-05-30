@@ -75,6 +75,7 @@ router.get('/internships', async (req, res) => {
       legitimacyMin = '60',
       sort = 'newest',
       datePosted = '',
+      confidence = '',
       page = '1',
       limit = '10'
     } = req.query;
@@ -196,6 +197,19 @@ router.get('/internships', async (req, res) => {
         queryParts.push('COALESCE(posted_at, created_at) >= NOW() - INTERVAL 7 DAY');
       } else if (datePosted === '30days') {
         queryParts.push('COALESCE(posted_at, created_at) >= NOW() - INTERVAL 30 DAY');
+      }
+    }
+
+    // Confidence filter (matches any of the selected confidences, e.g. HIGH,MEDIUM)
+    if (confidence) {
+      const selectedConfidences = confidence.split(',').map(s => s.trim().toUpperCase());
+      const confConditions = [];
+      selectedConfidences.forEach(c => {
+        confConditions.push('confidence = ?');
+        queryParams.push(c);
+      });
+      if (confConditions.length > 0) {
+        queryParts.push(`(${confConditions.join(' OR ')})`);
       }
     }
 

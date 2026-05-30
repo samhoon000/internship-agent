@@ -66,7 +66,11 @@ class YCJobsScraper(BaseScraper):
             job_cards = (
                 soup.select('div.bg-beige-lighter') or 
                 [p.parent.parent for p in soup.select('p.job-details')] or 
-                soup.select('div.flex.h-full.cursor-pointer.flex-col')
+                soup.select('div.flex.h-full.cursor-pointer.flex-col') or
+                soup.select('[class*="job-card"]') or
+                soup.select('.job-card') or
+                soup.select('article') or
+                soup.select('div[role="listitem"]')
             )
             logger.info(f"[YC Jobs] Found {len(job_cards)} job cards in DOM.")
             

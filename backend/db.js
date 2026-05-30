@@ -53,6 +53,16 @@ const pool = mysql.createPool({
       console.log('[Migration] "stipend_numeric" column is already present.');
     }
 
+    // Check if confidence column exists
+    const [confidenceCols] = await connection.query('SHOW COLUMNS FROM internships LIKE "confidence"');
+    if (confidenceCols.length === 0) {
+      console.log('[Migration] Adding "confidence" column to "internships" table...');
+      await connection.query('ALTER TABLE internships ADD COLUMN confidence VARCHAR(50) DEFAULT "HIGH" NOT NULL');
+      console.log('[Migration] Column "confidence" added successfully.');
+    } else {
+      console.log('[Migration] "confidence" column is already present.');
+    }
+
     connection.release();
   } catch (error) {
     console.error('Fatal: Database pool connection or migration failed. Error:', error.message);

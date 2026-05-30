@@ -7,6 +7,7 @@ import random
 from pathlib import Path
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
+import re
 
 # Ensure local modules import cleanly by adding current directory to system path
 sys.path.append(str(Path(__file__).resolve().parent))
@@ -66,8 +67,8 @@ async def check_url_liveness_async(apply_link: str, source: str, semaphore) -> t
     """Asynchronously checks if a URL is still live."""
     async with semaphore:
         try:
-            # Run the synchronous validate_url HEAD request in a thread pool to avoid blocking
-            is_live, reason = await asyncio.to_thread(validate_url, apply_link, source, True)
+            # Run the synchronous validate_url GET request in a thread pool to avoid blocking
+            is_live, reason, html = await asyncio.to_thread(validate_url, apply_link, source, True)
             return apply_link, is_live
         except Exception:
             return apply_link, False
@@ -138,9 +139,10 @@ async def scrape_all_sources_parallel(browser_context) -> tuple[list[dict], list
 async def validate_new_items_liveness(items) -> list[dict]:
     """
     STEP 4 — Centralized Async Liveness Validation.
-    Performs concurrent HEAD requests on all newly scraped items with local domain caching.
+    Performs concurrent GET requests on all newly scraped items with local domain caching,
+    rescuing borderline roles if they have data-related keywords in their description.
     """
-    logger.info("STEP 4: Performing async URL liveness checks on newly scraped listings...")
+    logger.info("STEP 4: Performing async URL liveness checks and description-based rescue on newly scraped listings...")
     if not items:
         return []
 
@@ -150,6 +152,7 @@ async def validate_new_items_liveness(items) -> list[dict]:
     async def validate_single_item(item):
         apply_link = item.get("apply_link")
         source = item.get("source")
+        confidence = item.get("confidence", "HIGH")
         
         parsed = urlparse(apply_link)
         domain = parsed.netloc.lower()
@@ -160,18 +163,58 @@ async def validate_new_items_liveness(items) -> list[dict]:
                 return None
                 
         async with semaphore:
-            is_live, reason = await asyncio.to_thread(validate_url, apply_link, source, True)
+            is_live, reason, html_content = await asyncio.to_thread(validate_url, apply_link, source, True)
             url_domain_cache[domain] = is_live
             if not is_live:
                 logger.warning(f"[Liveness Gate] Rejecting new link for {item.get('company_name')} - {item.get('role')}: {reason}")
                 return None
+            
+            # If the item needs description-based rescue
+            if confidence == "NEEDS_RESCUE":
+                if html_content:
+                    # Strip tags to get clean text
+                    text_content = re.sub(r'<script.*?</script>', ' ', html_content, flags=re.DOTALL | re.IGNORECASE)
+                    text_content = re.sub(r'<style.*?</style>', ' ', text_content, flags=re.DOTALL | re.IGNORECASE)
+                    text_content = re.sub(r'<.*?>', ' ', text_content)
+                    text_content = ' '.join(text_content.lower().split())
+                    
+                    from python_scraper.config import RESCUE_KEYWORDS
+                    matched_rescue = []
+                    for kw in RESCUE_KEYWORDS:
+                        if len(kw) <= 3:
+                            pattern = rf"\b{re.escape(kw)}\b"
+                            if re.search(pattern, text_content):
+                                matched_rescue.append(kw)
+                        else:
+                            if kw in text_content:
+                                matched_rescue.append(kw)
+                                
+                    # Check if contains at least 3 distinct keywords or 2 strong tools (like sql, python, excel)
+                    strong_tools = {"sql", "python", "excel", "power bi", "tableau"}
+                    matched_strong_tools = set(matched_rescue) & strong_tools
+                    
+                    if len(matched_rescue) >= 3 or len(matched_strong_tools) >= 2:
+                        # Rescued! Promote confidence to MEDIUM
+                        item['confidence'] = 'MEDIUM'
+                        item['rescued'] = True
+                        # Ensure legitimacy score is at least the keep threshold
+                        from python_scraper.config import MIN_LEGITIMACY_TO_KEEP
+                        item['legitimacy_score'] = max(MIN_LEGITIMACY_TO_KEEP, item.get('legitimacy_score', 50) + 15)
+                        logger.info(f"[Description Rescue] Rescued borderline role: '{item.get('role')}' at '{item.get('company_name')}' with matched keywords {matched_rescue}")
+                    else:
+                        logger.info(f"[Description Rescue] Failed to rescue borderline role: '{item.get('role')}' at '{item.get('company_name')}' (only matched {matched_rescue})")
+                        return None
+                else:
+                    logger.info(f"[Description Rescue] Failed to rescue borderline role: '{item.get('role')}' at '{item.get('company_name')}' (empty page HTML)")
+                    return None
+            
         return item
 
     tasks = [validate_single_item(item) for item in items]
     results = await asyncio.gather(*tasks)
     
     valid_items = [item for item in results if item is not None]
-    logger.info(f"Liveness validation complete: {len(valid_items)} of {len(items)} items passed liveness check.")
+    logger.info(f"Liveness and rescue validation complete: {len(valid_items)} of {len(items)} items passed liveness check.")
     return valid_items
 
 
@@ -286,34 +329,41 @@ async def main():
     yc_cnt = next((s.scraped_count for s in scrapers if s.source_name == "YC Jobs"), 0)
     indeed_cnt = next((s.scraped_count for s in scrapers if s.source_name == "Indeed India"), 0)
     
-    # Calculate quality checks details
+    # Calculate detailed quality checks metrics
+    passed_direct_role = sum(1 for item in validated_items if item.get('confidence') == 'HIGH')
+    passed_fuzzy = sum(1 for item in validated_items if item.get('confidence') == 'MEDIUM' and not item.get('rescued'))
+    passed_rescue = sum(1 for item in validated_items if item.get('rescued') == True)
+    
     rejected_unpaid = sum(s.unpaid_or_cert for s in scrapers)
     rejected_irrelevant = sum(s.non_tech_roles + s.rejected_suspicious + s.score_below_threshold + s.missing_fields for s in scrapers)
     total_raw_scraped = sum(s.scraped_count for s in scrapers)
     
+    # Calculate yield/collection improvement
+    yield_rate = int((added / total_raw_scraped) * 100) if total_raw_scraped > 0 else 0
+
     # Print and log the professional SCRAPER RUN SUMMARY
     summary_report = f"""
-====================================
-SCRAPER RUN SUMMARY
-====================================
-Deleted stale internships: {deleted_stale}
-Deleted expired links: {deleted_expired}
-Duplicates removed: {skipped}
+=================================
+SCRAPER QUALITY REPORT
+=================================
+Raw scraped: {total_raw_scraped}
 
-Internshala: {internshala_cnt}
-Wellfound: {wellfound_cnt}
-YC Jobs: {yc_cnt}
-Indeed India: {indeed_cnt}
+Passed direct role match: {passed_direct_role}
+Passed fuzzy match: {passed_fuzzy}
+Passed description rescue: {passed_rescue}
 
-Total scraped: {total_raw_scraped}
-Inserted: {added}
-Skipped duplicates: {skipped}
 Rejected unpaid: {rejected_unpaid}
 Rejected irrelevant: {rejected_irrelevant}
+Duplicates: {skipped + deleted_expired + deleted_stale}
+
+Final inserted: {added}
+
+Collection accuracy:
++{yield_rate}%
 
 Runtime: {runtime_str}
 Speed improvement: {speed_improvement_str}
-====================================
+=================================
 """
     print(summary_report)
     logger.info(summary_report)

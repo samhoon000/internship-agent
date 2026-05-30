@@ -70,6 +70,16 @@ class BaseScraper(ABC):
         logger.info(f"[{self.source_name}] Initiating live scraping process...")
         raw_results = []
         
+        # Load existing links from DB to calculate duplicate saturation
+        try:
+            from python_scraper.database.db import get_db_session, Internship
+            db_session = get_db_session()
+            self.existing_links = {r[0] for r in db_session.query(Internship.apply_link).all()}
+            db_session.close()
+        except Exception as e:
+            logger.warning(f"[{self.source_name}] Failed to load existing links from DB: {e}")
+            self.existing_links = set()
+        
         # Reset metrics on each scraping run
         self.scraped_count = 0
         self.rejected_suspicious = 0
@@ -149,7 +159,8 @@ class BaseScraper(ABC):
             cleaned['legitimacy_score'] = score
             
             # 4. Strict SQL insert safety gate check (score must be >= MIN_LEGITIMACY_TO_KEEP (60))
-            if score < MIN_LEGITIMACY_TO_KEEP:
+            # Relax check for borderline roles awaiting description-based rescue
+            if cleaned.get('confidence') != 'NEEDS_RESCUE' and score < MIN_LEGITIMACY_TO_KEEP:
                 logger.warning(f"[{self.source_name}] Internship at '{cleaned.get('company_name')}' rejected: score {score} is below required {MIN_LEGITIMACY_TO_KEEP}")
                 self.score_below_threshold += 1
                 continue

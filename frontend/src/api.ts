@@ -12,6 +12,7 @@ export interface Internship {
   stipend_numeric: number;
   source: string;
   legitimacy_score: number;
+  confidence?: string;
   created_at: string;
 }
 

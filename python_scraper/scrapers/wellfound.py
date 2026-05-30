@@ -83,7 +83,9 @@ class WellfoundScraper(BaseScraper):
                 soup.select('.styles_result__') or
                 soup.select('[class*="styles_result__"]') or 
                 soup.select('[class*="styles_jobCard__"]') or
-                soup.select('[class*="styles_startupCard__"]')
+                soup.select('[class*="styles_startupCard__"]') or
+                soup.select('article') or
+                soup.select('div[role="listitem"]')
             )
             logger.info(f"[Wellfound] Found {len(job_cards)} job cards in DOM.")
             

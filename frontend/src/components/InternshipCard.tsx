@@ -125,6 +125,19 @@ export default function InternshipCard({ internship, onBookmarkChanged }: Intern
           <span className="px-2 py-0.5 text-[10px] font-semibold bg-slate-50 text-slate-500 border border-slate-200/60 rounded">
             {internship.source}
           </span>
+          {internship.confidence === 'MEDIUM' ? (
+            <span className="px-2 py-0.5 text-[10px] font-semibold bg-blue-50 text-blue-700 border border-blue-100 rounded">
+              Potential Match
+            </span>
+          ) : internship.confidence === 'LOW' ? (
+            <span className="px-2 py-0.5 text-[10px] font-semibold bg-slate-50 text-slate-600 border border-slate-200 rounded">
+              Possible Match
+            </span>
+          ) : (
+            <span className="px-2 py-0.5 text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-100 rounded">
+              Highly Relevant
+            </span>
+          )}
         </div>
 
         {/* Skills Chips */}

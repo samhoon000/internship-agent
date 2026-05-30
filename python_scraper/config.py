@@ -32,18 +32,26 @@ PLAYWRIGHT_TIMEOUT = 30000   # milliseconds – page navigation timeout
 
 # ── Strict Filter Keywords ────────────────────────────────────────
 ROLE_WHITELIST_KEYWORDS = [
-    "data analyst", "business analyst", "data analytics", "analytics", "sql",
-    "power bi", "tableau", "bi analyst", "research analyst", "reporting analyst",
-    "data engineer", "data science", "machine learning", "quant analyst",
-    "quantitative analyst", "technical analyst", "financial analyst",
-    "statistics", "data visualization", "excel", "python", "pandas", "databricks",
-    "data analysis", "data specialist", "bi developer", "data architect",
-    "data modeler", "data wrangler", "insights analyst", "product analyst",
-    "analytics engineer"
+    # Data Analytics
+    "data analyst", "data analytics", "business analyst", "analytics intern", "reporting analyst",
+    "business intelligence", "bi analyst", "mis analyst", "mis executive", "research analyst",
+    "quantitative analyst", "operations analyst", "financial analyst", "market analyst", "risk analyst",
+    "product analyst", "data specialist", "bi developer", "data architect", "data modeler",
+    "data wrangler", "insights analyst", "analytics engineer",
+    # Data Engineering
+    "data engineer", "etl intern", "data pipeline", "sql developer", "database analyst",
+    "database intern", "databricks", "cloud data engineer",
+    # ML / AI / DS
+    "machine learning", "ai intern", "data science", "nlp", "computer vision", "model evaluation",
+    "annotation", "ai benchmarking", "llm evaluation", "synthetic data", "data labeling",
+    # Tools / General
+    "sql", "python", "pandas", "excel", "tableau", "power bi", "statistics", "visualization",
+    "spark", "bigquery"
 ]
 
 ROLE_CONTEXT_KEYWORDS = [
-    "data", "analyst", "analytics", "sql", "business intelligence", "reporting", "analysis"
+    "data", "analyst", "analytics", "sql", "business intelligence", "reporting", "analysis",
+    "ai", "ml", "etl", "bi", "mis", "database", "python", "excel", "tableau", "power bi"
 ]
 
 ROLE_HARD_EXCLUDE_KEYWORDS = [
@@ -55,7 +63,7 @@ ROLE_HARD_EXCLUDE_KEYWORDS = [
 
 ROLE_SOFT_EXCLUDE_KEYWORDS = [
     "software developer", "software engineer", "web development", "wordpress", "flutter",
-    "java developer", "android", "ios", "ui ux", "operations", "campus ambassador",
+    "java developer", "android", "ios", "ui ux", "campus ambassador",
     "business development"
 ]
 
@@ -69,7 +77,16 @@ BOOST_SKILLS = [
     "google sheets", "reporting", "data cleaning"
 ]
 
+RESCUE_KEYWORDS = [
+    "sql", "python", "excel", "pandas", "numpy", "tableau", "power bi",
+    "powerbi", "dashboard", "reporting", "data cleaning", "analytics",
+    "etl", "bigquery", "spark", "databricks", "data science", "machine learning",
+    "data analysis", "data pipeline", "statistics", "data visualization", "data analyst",
+    "business intelligence", "research", "database"
+]
+
 EXCLUDE_KEYWORDS = ROLE_HARD_EXCLUDE_KEYWORDS + ROLE_SOFT_EXCLUDE_KEYWORDS
+
 
 # ── Source Domain Mappings (for URL validation) ───────────────────
 # Each source's apply_link MUST contain one of its allowed domains.

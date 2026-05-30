@@ -180,7 +180,14 @@ class InternshalaScraper(BaseScraper):
         html = await page.content()
         soup = BeautifulSoup(html, 'html.parser')
         
-        listings = soup.select('.individual_internship') or soup.select('[class*="individual_internship"]')
+        listings = (
+            soup.select('.individual_internship') or 
+            soup.select('[class*="individual_internship"]') or
+            soup.select('.internship_meta') or
+            soup.select('[data-testid*="internship"]') or
+            soup.select('.internship-card') or
+            soup.select('div.internship-detail-card')
+        )
         if not listings:
             logger.info(f"[Internshala] [Category: {cat} | Page {page_num}] No listings found in DOM. Reached end of pagination.")
             return [], True
@@ -344,35 +351,62 @@ class InternshalaScraper(BaseScraper):
 
     async def scrape_live(self, browser_context) -> list[dict]:
         """
-        Scrapes live technical internships from Internshala by iterating over categories in parallel.
+        Scrapes live technical internships from Internshala by paginating categories sequentially with duplicate saturation monitoring.
         """
         categories = [
             "data-analytics-internship",
             "data-science-internship",
             "machine-learning-internship",
+            "business-analytics-internship",
+            "business-intelligence-internship",
+            "sql-internship",
+            "analytics-internship",
+            "research-internship",
+            "ai-internship",
+            "operations-analyst-internship",
+            "statistics-internship"
         ]
 
-        logger.info("[Internshala] Starting parallel scraping for categories with Semaphore(2)...")
-        semaphore = asyncio.Semaphore(2)
-
-        async def sem_scrape(cat, page_num):
-            async with semaphore:
-                return await self.scrape_page(browser_context, cat, page_num)
-
-        tasks = []
+        logger.info("[Internshala] Starting sequential category scraping with smart pagination...")
         
-        # Add tasks for categories and pages to scrape concurrently
-        for cat in categories:
-            for page_num in range(1, PAGES_TO_SCRAPE + 1):
-                tasks.append(sem_scrape(cat, page_num))
-
-        results_batches = await asyncio.gather(*tasks)
-        
-        # Flatten results list
         all_results = []
-        for batch in results_batches:
-            all_results.extend(batch)
+        session_seen_links = set()
+        total_pages_scraped = 0
+
+        for cat in categories:
+            page_num = 1
+            logger.info(f"[Internshala] Starting category: {cat}")
             
-        self.pages_scraped = PAGES_TO_SCRAPE * len(categories)
+            while page_num <= 10:  # safety cap
+                page_results = await self.scrape_page(browser_context, cat, page_num)
+                if not page_results:
+                    logger.info(f"[Internshala] [Category: {cat}] Page {page_num} returned no listings. Stopping pagination.")
+                    break
+                
+                total_pages_scraped += 1
+                total_items = len(page_results)
+                dup_items = 0
+                
+                for item in page_results:
+                    link = item.get('apply_link')
+                    # Check if exists in DB or already seen in this session
+                    if link in self.existing_links or link in session_seen_links:
+                        dup_items += 1
+                    else:
+                        session_seen_links.add(link)
+                
+                all_results.extend(page_results)
+                
+                # Check duplicate saturation
+                saturation = dup_items / total_items if total_items > 0 else 0
+                logger.info(f"[Internshala] [Category: {cat} | Page {page_num}] Saturation: {saturation:.1%} ({dup_items}/{total_items} duplicate items).")
+                
+                if total_items > 0 and saturation > 0.8:
+                    logger.info(f"[Internshala] [Category: {cat}] Duplicate saturation exceeded 80% on page {page_num}. Stopping pagination.")
+                    break
+                
+                page_num += 1
+
+        self.pages_scraped = total_pages_scraped
         logger.info(f"[Internshala] Total extracted raw listings: {len(all_results)}")
         return all_results
