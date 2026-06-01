@@ -192,7 +192,7 @@ export default function Layout({ children }: LayoutProps) {
                 <span>MySQL Connected</span>
               </div>
               <p className="text-xs text-slate-400 mt-2">
-                Playwright crawers scan once daily. Low confidence listings are auto-filtered out.
+                Playwright crawlers scan once daily. Low confidence listings are auto-filtered out.
               </p>
             </div>
           </div>
@@ -201,9 +201,6 @@ export default function Layout({ children }: LayoutProps) {
             <p className="text-xs text-slate-400">
               &copy; {new Date().getFullYear()} InternLegit. All rights reserved.
             </p>
-            <div className="flex space-x-4 mt-4 sm:mt-0 text-xs text-slate-400">
-              <span>Recruiter-Impressive Portfolio Project</span>
-            </div>
           </div>
         </div>
       </footer>

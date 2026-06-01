@@ -58,7 +58,9 @@ ROLE_HARD_EXCLUDE_KEYWORDS = [
     "marketing", "seo", "wordpress", "react", "node", "frontend", "backend",
     "full stack", "sales", "hr", "customer support", "content writing",
     "social media", "recruiting", "talent acquisition", "telecalling",
-    "telecaller", "bda", "bde", "receptionist", "graphic design"
+    "telecaller", "bda", "bde", "receptionist", "graphic design",
+    "human resources", "educational consultant", "copywriter", "interior designer",
+    "electronics engineer", "recruiter", "designer", "consultant"
 ]
 
 ROLE_SOFT_EXCLUDE_KEYWORDS = [

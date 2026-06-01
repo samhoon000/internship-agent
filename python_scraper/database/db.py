@@ -84,6 +84,16 @@ def init_db():
                     conn.execute(text("ALTER TABLE internships ADD COLUMN confidence VARCHAR(50) DEFAULT 'HIGH' NOT NULL"))
                     logger.info("[Migration] Column 'confidence' added successfully.")
                 
+                if "description" not in existing_cols:
+                    logger.info("[Migration] Adding 'description' column to 'internships' table...")
+                    conn.execute(text("ALTER TABLE internships ADD COLUMN description TEXT DEFAULT NULL"))
+                    logger.info("[Migration] Column 'description' added successfully.")
+
+                if "relevance_score" not in existing_cols:
+                    logger.info("[Migration] Adding 'relevance_score' column to 'internships' table...")
+                    conn.execute(text("ALTER TABLE internships ADD COLUMN relevance_score INT DEFAULT 0 NOT NULL"))
+                    logger.info("[Migration] Column 'relevance_score' added successfully.")
+                
                 conn.commit()
         except Exception as migration_error:
             logger.warning(f"Database startup sequence: Auto-migration of columns failed: {migration_error}")
@@ -118,22 +128,30 @@ def parse_stipend_to_numeric(stipend_str: str) -> int:
 def save_internships(internship_dicts, stats_dict=None):
     """
     Saves a list of internship dictionaries to the database.
-    Prevents duplicates by checking against memory sets of existing records (apply_link and company_name + role).
+    Prevents duplicates by checking against memory sets of existing records (apply_link and company_name + role + location hash).
     Uses SQLAlchemy bulk_insert_mappings for high performance database writes.
     """
+    import hashlib
     session = get_db_session()
     saved_count = 0
     skipped_count = 0
     rejected_low_confidence = 0
     rejected_malformed = 0
 
+    def get_dedup_hash(comp: str, role_title: str, loc: str) -> str:
+        c = (comp or "").lower().strip()
+        r = (role_title or "").lower().strip()
+        l = (loc or "").lower().strip()
+        raw = f"{c}||{r}||{l}"
+        return hashlib.md5(raw.encode('utf-8')).hexdigest()
+
     from python_scraper.config import MIN_LEGITIMACY_TO_KEEP
 
     try:
         # Load all existing links and combos into memory sets
         existing_links = {r[0] for r in session.query(Internship.apply_link).all()}
-        existing_combos = {f"{r[0].lower().strip()}||{r[1].lower().strip()}||{(r[2] or '').lower().strip()}" 
-                           for r in session.query(Internship.company_name, Internship.role, Internship.stipend).all() if r[0] and r[1]}
+        existing_combos = {get_dedup_hash(r[0], r[1], r[2]) 
+                           for r in session.query(Internship.company_name, Internship.role, Internship.location).all() if r[0] and r[1]}
 
         to_insert = []
         
@@ -161,7 +179,7 @@ def save_internships(internship_dicts, stats_dict=None):
                 rejected_low_confidence += 1
                 continue
 
-            combo = f"{company_name.lower()}||{role.lower()}||{item.get('stipend', '').lower().strip()}"
+            combo = get_dedup_hash(company_name, role, item.get('location'))
 
             # Dedup check
             if apply_link in existing_links or combo in existing_combos:
@@ -209,6 +227,8 @@ def save_internships(internship_dicts, stats_dict=None):
                 "legitimacy_score": score,
                 "freshness_score": freshness,
                 "confidence": item.get('confidence', 'HIGH'),
+                "description": item.get('description'),
+                "relevance_score": item.get('relevance_score', 0),
                 "posted_at": posted_at,
                 "created_at": datetime.utcnow()
             }

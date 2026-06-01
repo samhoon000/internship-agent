@@ -408,3 +408,72 @@ def run_validation_pipeline(item: dict, check_liveness: bool = True) -> tuple[bo
     if failures:
         return False, failures
     return True, notes
+
+
+def calculate_relevance_score(title: str, skills: str, description: str) -> int:
+    """
+    Calculates role relevance score based on title, skills, and description.
+    Returns an integer from 0 to 100.
+    """
+    if not title:
+        return 0
+        
+    title_lower = title.lower()
+    skills_lower = (skills or "").lower()
+    desc_lower = (description or "").lower()
+    
+    # 1. Hard Excludes Check (Title-based)
+    # If title contains any of the hard exclusions, relevance is 0
+    from python_scraper.config import ROLE_HARD_EXCLUDE_KEYWORDS
+    for kw in ROLE_HARD_EXCLUDE_KEYWORDS:
+        # Use word boundary matching
+        pattern = rf"\b{re.escape(kw)}\b"
+        if re.search(pattern, title_lower):
+            return 0
+            
+    # 2. Positive Keyword Matching
+    # Title Score (Max 60)
+    title_score = 10
+    
+    # Analyst / BI / Reporting / Business Analyst
+    analyst_keywords = ["data analyst", "business analyst", "analytics", "bi analyst", "reporting analyst", "business intelligence", "mis analyst", "mis executive"]
+    science_keywords = ["data science", "data scientist", "machine learning", "ai", "predictive modeling"]
+    engineer_keywords = ["data engineer", "etl", "sql developer", "database"]
+    core_tools = ["data", "analyst", "python", "sql", "excel", "tableau", "power bi"]
+    
+    if any(kw in title_lower for kw in analyst_keywords):
+        title_score = 60
+    elif any(kw in title_lower for kw in science_keywords):
+        title_score = 60
+    elif any(kw in title_lower for kw in engineer_keywords):
+        title_score = 50
+    elif any(kw in title_lower for kw in core_tools):
+        title_score = 40
+        
+    # Skills Score (Max 30)
+    # Score 10 points per matching core skill, up to 30
+    skills_score = 0
+    core_skills = ["python", "sql", "excel", "power bi", "tableau", "pandas", "numpy", "sklearn", "machine learning", "data science", "database", "bi", "analytics", "reporting"]
+    
+    # Split skills by comma
+    skills_list = [s.strip() for s in skills_lower.split(",") if s.strip()]
+    matched_skills = set()
+    for s in skills_list:
+        for cs in core_skills:
+            if cs in s:
+                matched_skills.add(cs)
+                
+    skills_score = min(30, len(matched_skills) * 10)
+    
+    # Description Score (Max 20)
+    # Score 5 points per matching core tool/keyword in description, up to 20
+    desc_score = 0
+    if desc_lower:
+        matched_desc = set()
+        for kw in core_skills + analyst_keywords + science_keywords:
+            if kw in desc_lower:
+                matched_desc.add(kw)
+        desc_score = min(20, len(matched_desc) * 5)
+        
+    return title_score + skills_score + desc_score
+

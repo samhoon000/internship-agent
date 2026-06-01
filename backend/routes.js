@@ -60,6 +60,62 @@ async function getCachedInternships() {
   }
   return dbCache.data;
 }// 1. GET /api/internships - Search, Filter, Sort, Paginate
+// Helper to compute match score dynamically based on user filters
+function getMatchScore(row, query = {}) {
+  const { skills = '', location = '', remote = '', stipendMin = '0' } = query;
+  
+  const userSkills = skills ? skills.split(',').map(s => s.trim().toLowerCase()) : ['python', 'sql', 'excel', 'power bi', 'tableau'];
+  const selectedLocations = location ? location.split(',').map(s => s.trim().toLowerCase()) : [];
+  
+  // 1. Skills overlap (40%)
+  const jobSkills = (row.skills_list || []).map(s => s.toLowerCase());
+  const overlap = userSkills.filter(s => jobSkills.some(js => js.includes(s) || s.includes(js)));
+  const skillsOverlapScore = userSkills.length > 0 ? (overlap.length / userSkills.length) * 100 : 100;
+  
+  // 2. Role relevance (25%)
+  const relevanceScore = row.relevance_score || 0;
+  
+  // 3. Experience alignment (15%)
+  let experienceAlignment = 100;
+  const textToSearch = `${row.role} ${row.description || ''}`.toLowerCase();
+  if (/(2|3|4|5)\s*\+\s*years/i.test(textToSearch) || /prior experience of/i.test(textToSearch)) {
+    experienceAlignment = 50;
+  }
+  
+  // 4. Location preference (10%)
+  let locationScore = 100;
+  if (selectedLocations.length > 0) {
+    const matchesLocation = selectedLocations.some(loc => {
+      if (loc === 'remote') {
+        return row.remote === 1 || (row.location && (row.location.toLowerCase().includes('remote') || row.location.toLowerCase().includes('work from home')));
+      }
+      return row.location && row.location.toLowerCase().includes(loc);
+    });
+    locationScore = matchesLocation ? 100 : 0;
+  }
+  
+  // 5. Stipend preference (10%)
+  let stipendScore = 100;
+  if (stipendMin && stipendMin !== '0') {
+    const minStipNum = parseInt(stipendMin, 10);
+    const jobStipend = row.stipend_numeric || 0;
+    if (jobStipend < minStipNum) {
+      stipendScore = minStipNum > 0 ? Math.round((jobStipend / minStipNum) * 100) : 0;
+    }
+  }
+  
+  const matchScore = Math.round(
+    (skillsOverlapScore * 0.40) +
+    (relevanceScore * 0.25) +
+    (experienceAlignment * 0.15) +
+    (locationScore * 0.10) +
+    (stipendScore * 0.10)
+  );
+  
+  return Math.min(100, Math.max(0, matchScore));
+}
+
+// 1. GET /api/internships - Search, Filter, Sort, Paginate
 router.get('/internships', async (req, res) => {
   try {
     // Extract query parameters (supporting full filter range)
@@ -84,174 +140,149 @@ router.get('/internships', async (req, res) => {
     const limitNum = parseInt(limit, 10) || 10;
     const offset = (pageNum - 1) * limitNum;
 
-    let queryParts = [];
-    let queryParams = [];
+    // Fetch all records from cache
+    let data = await getCachedInternships();
+
+    // BASE relevance check (relevance_score >= 40)
+    data = data.filter(row => (row.relevance_score || 0) >= 40);
 
     // Search filter (company, role, skills, location)
     if (search.trim()) {
-      const q = `%${search.trim()}%`;
-      queryParts.push('(company_name LIKE ? OR role LIKE ? OR skills LIKE ? OR location LIKE ?)');
-      queryParams.push(q, q, q, q);
+      const q = search.trim().toLowerCase();
+      data = data.filter(row => 
+        (row.company_name && row.company_name.toLowerCase().includes(q)) ||
+        (row.role && row.role.toLowerCase().includes(q)) ||
+        (row.skills && row.skills.toLowerCase().includes(q)) ||
+        (row.location && row.location.toLowerCase().includes(q))
+      );
     }
 
-    // Location filter (matches any of the selected locations)
+    // Location filter
     if (location) {
       const selectedLocations = location.split(',').map(s => s.trim().toLowerCase());
-      const locConditions = [];
-      selectedLocations.forEach(loc => {
-        if (loc === 'remote') {
-          locConditions.push('(remote = 1 OR location LIKE "%remote%" OR location LIKE "%work from home%")');
-        } else if (loc === 'hybrid') {
-          locConditions.push('(location LIKE "%hybrid%")');
-        } else {
-          locConditions.push('(location LIKE ?)');
-          queryParams.push(`%${loc}%`);
-        }
+      data = data.filter(row => {
+        return selectedLocations.some(loc => {
+          if (loc === 'remote') {
+            return row.remote === 1 || (row.location && (row.location.toLowerCase().includes('remote') || row.location.toLowerCase().includes('work from home')));
+          } else if (loc === 'hybrid') {
+            return row.location && row.location.toLowerCase().includes('hybrid');
+          } else {
+            return row.location && row.location.toLowerCase().includes(loc);
+          }
+        });
       });
-      if (locConditions.length > 0) {
-        queryParts.push(`(${locConditions.join(' OR ')})`);
-      }
     }
 
     // Remote filter
     if (remote) {
-      if (remote === 'remote') {
-        queryParts.push('(remote = 1 OR location LIKE "%remote%" OR location LIKE "%work from home%")');
-      } else if (remote === 'onsite') {
-        queryParts.push('(remote = 0 AND (location NOT LIKE "%hybrid%" OR location IS NULL))');
-      } else if (remote === 'hybrid') {
-        queryParts.push('(location LIKE "%hybrid%")');
-      }
+      data = data.filter(row => {
+        if (remote === 'remote') {
+          return row.remote === 1 || (row.location && (row.location.toLowerCase().includes('remote') || row.location.toLowerCase().includes('work from home')));
+        } else if (remote === 'onsite') {
+          return row.remote === 0 && !(row.location && row.location.toLowerCase().includes('hybrid'));
+        } else if (remote === 'hybrid') {
+          return row.location && row.location.toLowerCase().includes('hybrid');
+        }
+        return true;
+      });
     }
 
-    // Duration filter (matches any of the selected durations)
+    // Duration filter
     if (duration) {
       const selectedDurations = duration.split(',').map(s => s.trim().toLowerCase());
-      const durConditions = [];
-      selectedDurations.forEach(d => {
-        if (d === '6+') {
-          durConditions.push("(duration REGEXP '[6-9]|[0-9]{2,}')");
-        } else {
-          const num = parseInt(d, 10);
-          if (!isNaN(num)) {
-            durConditions.push(`(duration LIKE ?)`);
-            queryParams.push(`%${num}%`);
+      data = data.filter(row => {
+        return selectedDurations.some(d => {
+          if (d === '6+') {
+            return row.duration && /[6-9]|[0-9]{2,}/.test(row.duration);
+          } else {
+            const num = parseInt(d, 10);
+            return row.duration && row.duration.toLowerCase().includes(num.toString());
           }
-        }
+        });
       });
-      if (durConditions.length > 0) {
-        queryParts.push(`(${durConditions.join(' OR ')})`);
-      }
     }
 
     // Skills filter (matches ALL selected skills)
     if (skills) {
       const selectedSkills = skills.split(',').map(s => s.trim().toLowerCase());
-      selectedSkills.forEach(skill => {
-        queryParts.push('skills LIKE ?');
-        queryParams.push(`%${skill}%`);
+      data = data.filter(row => {
+        const jobSkills = row.skills_list.map(s => s.toLowerCase());
+        return selectedSkills.every(skill => jobSkills.includes(skill));
       });
     }
 
-    // Sources filter (matches any of the selected sources)
+    // Sources filter
     if (source) {
       const selectedSources = source.split(',').map(s => s.trim().toLowerCase());
-      const srcConditions = [];
-      selectedSources.forEach(src => {
-        srcConditions.push('LOWER(source) = ?');
-        queryParams.push(src);
-      });
-      if (srcConditions.length > 0) {
-        queryParts.push(`(${srcConditions.join(' OR ')})`);
-      }
+      data = data.filter(row => selectedSources.includes((row.source || '').toLowerCase()));
     }
 
     // Min stipend filter
     const minStip = parseInt(stipendMin, 10) || 0;
     if (minStip > 0) {
-      queryParts.push('stipend_numeric >= ?');
-      queryParams.push(minStip);
+      data = data.filter(row => (row.stipend_numeric || 0) >= minStip);
     }
 
     // Max stipend filter
     if (stipendMax) {
       const maxStip = parseInt(stipendMax, 10);
       if (!isNaN(maxStip)) {
-        queryParts.push('stipend_numeric <= ?');
-        queryParams.push(maxStip);
+        data = data.filter(row => (row.stipend_numeric || 0) <= maxStip);
       }
     }
 
     // Min legitimacy filter
     const minLegit = parseInt(legitimacyMin, 10) || 60;
-    queryParts.push('legitimacy_score >= ?');
-    queryParams.push(minLegit);
+    data = data.filter(row => (row.legitimacy_score || 0) >= minLegit);
 
     // Date Posted filter
     if (datePosted) {
-      if (datePosted === 'today') {
-        queryParts.push('COALESCE(posted_at, created_at) >= NOW() - INTERVAL 1 DAY');
-      } else if (datePosted === '3days') {
-        queryParts.push('COALESCE(posted_at, created_at) >= NOW() - INTERVAL 3 DAY');
-      } else if (datePosted === '7days') {
-        queryParts.push('COALESCE(posted_at, created_at) >= NOW() - INTERVAL 7 DAY');
-      } else if (datePosted === '30days') {
-        queryParts.push('COALESCE(posted_at, created_at) >= NOW() - INTERVAL 30 DAY');
-      }
+      const now = new Date();
+      data = data.filter(row => {
+        const postedTime = row.posted_at ? new Date(row.posted_at) : new Date(row.created_at);
+        const diffTime = Math.abs(now - postedTime);
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        if (datePosted === 'today') return diffDays <= 1;
+        if (datePosted === '3days') return diffDays <= 3;
+        if (datePosted === '7days') return diffDays <= 7;
+        if (datePosted === '30days') return diffDays <= 30;
+        return true;
+      });
     }
 
-    // Confidence filter (matches any of the selected confidences, e.g. HIGH,MEDIUM)
+    // Confidence filter
     if (confidence) {
       const selectedConfidences = confidence.split(',').map(s => s.trim().toUpperCase());
-      const confConditions = [];
-      selectedConfidences.forEach(c => {
-        confConditions.push('confidence = ?');
-        queryParams.push(c);
-      });
-      if (confConditions.length > 0) {
-        queryParts.push(`(${confConditions.join(' OR ')})`);
-      }
+      data = data.filter(row => selectedConfidences.includes((row.confidence || '').toUpperCase()));
     }
 
-    // Construct SQL queries
-    let whereClause = '';
-    if (queryParts.length > 0) {
-      whereClause = 'WHERE ' + queryParts.join(' AND ');
-    }
-
-    // Sort mapping
-    let orderClause = 'ORDER BY COALESCE(posted_at, created_at) DESC';
-    if (sort === 'stipend') {
-      orderClause = 'ORDER BY stipend_numeric DESC, COALESCE(posted_at, created_at) DESC';
-    } else if (sort === 'legitimacy') {
-      orderClause = 'ORDER BY legitimacy_score DESC, COALESCE(posted_at, created_at) DESC';
-    } else if (sort === 'recently_added') {
-      orderClause = 'ORDER BY created_at DESC';
-    }
-
-    // Get Total Count Query
-    const countSql = `SELECT COUNT(*) as total FROM internships ${whereClause}`;
-    const [countRows] = await pool.query(countSql, queryParams);
-    const total = countRows[0].total;
-
-    // Get Paginated Data Query
-    const dataSql = `SELECT * FROM internships ${whereClause} ${orderClause} LIMIT ? OFFSET ?`;
-    const dataParams = [...queryParams, limitNum, offset];
-    const [rows] = await pool.query(dataSql, dataParams);
-
-    // Format rows
-    const formattedInternships = rows.map(row => {
-      const skillsArray = row.skills 
-        ? row.skills.split(',').map(s => s.trim()).filter(s => s.length > 0)
-        : [];
+    // Calculate dynamic match scores for remaining items
+    let formattedInternships = data.map(row => {
+      const mScore = getMatchScore(row, req.query);
       return {
         ...row,
-        skills_list: skillsArray
+        match_score: mScore
       };
     });
 
+    // Sort mapping
+    if (sort === 'legitimacy') {
+      // Sort by computed match_score DESC
+      formattedInternships.sort((a, b) => b.match_score - a.match_score || new Date(b.posted_at || b.created_at) - new Date(a.posted_at || a.created_at));
+    } else if (sort === 'stipend') {
+      formattedInternships.sort((a, b) => b.stipend_numeric - a.stipend_numeric || new Date(b.posted_at || b.created_at) - new Date(a.posted_at || a.created_at));
+    } else if (sort === 'recently_added') {
+      formattedInternships.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    } else {
+      formattedInternships.sort((a, b) => new Date(b.posted_at || b.created_at) - new Date(a.posted_at || a.created_at));
+    }
+
+    // Paginate in memory
+    const total = formattedInternships.length;
+    const paginatedInternships = formattedInternships.slice(offset, offset + limitNum);
+
     res.json({
-      internships: formattedInternships,
+      internships: paginatedInternships,
       total,
       page: pageNum,
       limit: limitNum,
@@ -264,7 +295,6 @@ router.get('/internships', async (req, res) => {
 });
 
 // 2. GET /api/internships/:applyLink - Specific internship details
-// Expected path parameter is URL-safe base64 or URI encoded apply_link
 router.get('/internships/:applyLink', async (req, res) => {
   try {
     const rawLink = req.params.applyLink;
@@ -288,6 +318,12 @@ router.get('/internships/:applyLink', async (req, res) => {
       return res.status(404).json({ error: 'Internship not found' });
     }
 
+    // Attach dynamic match score to the item
+    const itemWithScore = {
+      ...item,
+      match_score: getMatchScore(item, req.query)
+    };
+
     // Find suggested similar internships
     const similar = internships
       .filter(i => i.apply_link !== decodedLink && (
@@ -295,10 +331,14 @@ router.get('/internships/:applyLink', async (req, res) => {
         (i.source === item.source) ||
         (i.skills_list.some(s => item.skills_list.includes(s)))
       ))
-      .slice(0, 3);
+      .slice(0, 3)
+      .map(i => ({
+        ...i,
+        match_score: getMatchScore(i, req.query)
+      }));
 
     res.json({
-      internship: item,
+      internship: itemWithScore,
       similar
     });
   } catch (error) {

@@ -25,6 +25,8 @@ class Internship(Base):
     posted_at = Column(DateTime, nullable=True)
     freshness_score = Column(Integer, default=0, nullable=False)
     confidence = Column(String(50), default="HIGH", nullable=False)
+    description = Column(String(5000), nullable=True)  # Stored text description
+    relevance_score = Column(Integer, default=0, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     def to_dict(self):
@@ -45,6 +47,8 @@ class Internship(Base):
             "created_at": self.created_at.strftime("%Y-%m-%d %H:%M:%S") if self.created_at else None,
             "posted_at": self.posted_at.strftime("%Y-%m-%d %H:%M:%S") if self.posted_at else None,
             "freshness_score": self.freshness_score,
-            "confidence": self.confidence
+            "confidence": self.confidence,
+            "description": self.description,
+            "relevance_score": self.relevance_score
         }
 

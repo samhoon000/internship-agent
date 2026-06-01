@@ -13,6 +13,8 @@ export interface Internship {
   source: string;
   legitimacy_score: number;
   confidence?: string;
+  description?: string | null;
+  match_score?: number;
   created_at: string;
 }
 

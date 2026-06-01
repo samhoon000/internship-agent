@@ -63,6 +63,109 @@ const pool = mysql.createPool({
       console.log('[Migration] "confidence" column is already present.');
     }
 
+    // Check if description column exists
+    const [descCols] = await connection.query('SHOW COLUMNS FROM internships LIKE "description"');
+    if (descCols.length === 0) {
+      console.log('[Migration] Adding "description" column to "internships" table...');
+      await connection.query('ALTER TABLE internships ADD COLUMN description TEXT DEFAULT NULL');
+      console.log('[Migration] Column "description" added successfully.');
+    } else {
+      console.log('[Migration] "description" column is already present.');
+    }
+
+    // Check if relevance_score column exists
+    const [relevanceCols] = await connection.query('SHOW COLUMNS FROM internships LIKE "relevance_score"');
+    if (relevanceCols.length === 0) {
+      console.log('[Migration] Adding "relevance_score" column to "internships" table...');
+      await connection.query('ALTER TABLE internships ADD COLUMN relevance_score INT DEFAULT 0 NOT NULL');
+      console.log('[Migration] Column "relevance_score" added successfully.');
+    } else {
+      console.log('[Migration] "relevance_score" column is already present.');
+    }
+
+    // Run relevance migration check/purge on startup
+    console.log('[Migration] Running relevance score calculation on existing listings...');
+    const [rows] = await connection.query('SELECT apply_link, role, skills, description FROM internships');
+    
+    const calculateRelevanceScore = (role, skills, description) => {
+      if (!role) return 0;
+      const roleLower = role.toLowerCase();
+      const skillsLower = (skills || '').toLowerCase();
+      const descLower = (description || '').toLowerCase();
+      
+      const hardExcludes = [
+        "marketing", "seo", "wordpress", "react", "node", "frontend", "backend",
+        "full stack", "sales", "hr", "customer support", "content writing",
+        "social media", "recruiting", "talent acquisition", "telecalling",
+        "telecaller", "bda", "bde", "receptionist", "graphic design",
+        "human resources", "educational consultant", "copywriter", "interior designer",
+        "electronics engineer", "recruiter", "designer", "consultant"
+      ];
+      
+      for (const kw of hardExcludes) {
+        const regex = new RegExp(`\\b${kw.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`, 'i');
+        if (regex.test(roleLower)) {
+          return 0;
+        }
+      }
+      
+      let titleScore = 10;
+      const analystKeywords = ["data analyst", "business analyst", "analytics", "bi analyst", "reporting analyst", "business intelligence", "mis analyst", "mis executive"];
+      const scienceKeywords = ["data science", "data scientist", "machine learning", "ai", "predictive modeling"];
+      const engineerKeywords = ["data engineer", "etl", "sql developer", "database"];
+      const coreTools = ["data", "analyst", "python", "sql", "excel", "tableau", "power bi"];
+      
+      if (analystKeywords.some(kw => roleLower.includes(kw))) {
+        titleScore = 60;
+      } else if (scienceKeywords.some(kw => roleLower.includes(kw))) {
+        titleScore = 60;
+      } else if (engineerKeywords.some(kw => roleLower.includes(kw))) {
+        titleScore = 50;
+      } else if (coreTools.some(kw => roleLower.includes(kw))) {
+        titleScore = 40;
+      }
+      
+      let skillsScore = 0;
+      const coreSkills = ["python", "sql", "excel", "power bi", "tableau", "pandas", "numpy", "sklearn", "machine learning", "data science", "database", "bi", "analytics", "reporting"];
+      const skillsList = skillsLower.split(',').map(s => s.trim()).filter(Boolean);
+      const matchedSkills = new Set();
+      for (const s of skillsList) {
+        for (const cs of coreSkills) {
+          if (s.includes(cs)) {
+            matchedSkills.add(cs);
+          }
+        }
+      }
+      skillsScore = Math.min(30, matchedSkills.size * 10);
+      
+      let descScore = 0;
+      if (descLower) {
+        const matchedDesc = new Set();
+        for (const kw of [...coreSkills, ...analystKeywords, ...scienceKeywords]) {
+          if (descLower.includes(kw)) {
+            matchedDesc.add(kw);
+          }
+        }
+        descScore = Math.min(20, matchedDesc.size * 5);
+      }
+      
+      return titleScore + skillsScore + descScore;
+    };
+
+    let updatedCount = 0;
+    let deletedCount = 0;
+    for (const row of rows) {
+      const score = calculateRelevanceScore(row.role, row.skills, row.description);
+      if (score < 40) {
+        await connection.query('DELETE FROM internships WHERE apply_link = ?', [row.apply_link]);
+        deletedCount++;
+      } else {
+        await connection.query('UPDATE internships SET relevance_score = ? WHERE apply_link = ?', [score, row.apply_link]);
+        updatedCount++;
+      }
+    }
+    console.log(`[Migration] Relevance updates done: populated ${updatedCount} rows, purged ${deletedCount} irrelevant rows.`);
+
     connection.release();
   } catch (error) {
     console.error('Fatal: Database pool connection or migration failed. Error:', error.message);

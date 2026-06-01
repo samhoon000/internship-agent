@@ -169,44 +169,34 @@ async def validate_new_items_liveness(items) -> list[dict]:
                 logger.warning(f"[Liveness Gate] Rejecting new link for {item.get('company_name')} - {item.get('role')}: {reason}")
                 return None
             
-            # If the item needs description-based rescue
+            # Extract and store clean description
+            description = ""
+            if html_content:
+                text_content = re.sub(r'<script.*?</script>', ' ', html_content, flags=re.DOTALL | re.IGNORECASE)
+                text_content = re.sub(r'<style.*?</style>', ' ', text_content, flags=re.DOTALL | re.IGNORECASE)
+                text_content = re.sub(r'<.*?>', ' ', text_content)
+                description = ' '.join(text_content.split())
+            
+            item['description'] = description[:4900]
+            
+            # Calculate unified relevance score
+            from python_scraper.utils.validators import calculate_relevance_score
+            relevance = calculate_relevance_score(item.get("role"), item.get("skills"), description)
+            item['relevance_score'] = relevance
+            
+            # Reject if below relevance threshold (40)
+            if relevance < 40:
+                logger.warning(f"[Relevance Gate] Rejecting role: '{item.get('role')}' at '{item.get('company_name')}' (Relevance score {relevance} < 40)")
+                return None
+            
+            # If the item needs description-based rescue, promote it
             if confidence == "NEEDS_RESCUE":
-                if html_content:
-                    # Strip tags to get clean text
-                    text_content = re.sub(r'<script.*?</script>', ' ', html_content, flags=re.DOTALL | re.IGNORECASE)
-                    text_content = re.sub(r'<style.*?</style>', ' ', text_content, flags=re.DOTALL | re.IGNORECASE)
-                    text_content = re.sub(r'<.*?>', ' ', text_content)
-                    text_content = ' '.join(text_content.lower().split())
-                    
-                    from python_scraper.config import RESCUE_KEYWORDS
-                    matched_rescue = []
-                    for kw in RESCUE_KEYWORDS:
-                        if len(kw) <= 3:
-                            pattern = rf"\b{re.escape(kw)}\b"
-                            if re.search(pattern, text_content):
-                                matched_rescue.append(kw)
-                        else:
-                            if kw in text_content:
-                                matched_rescue.append(kw)
-                                
-                    # Check if contains at least 3 distinct keywords or 2 strong tools (like sql, python, excel)
-                    strong_tools = {"sql", "python", "excel", "power bi", "tableau"}
-                    matched_strong_tools = set(matched_rescue) & strong_tools
-                    
-                    if len(matched_rescue) >= 3 or len(matched_strong_tools) >= 2:
-                        # Rescued! Promote confidence to MEDIUM
-                        item['confidence'] = 'MEDIUM'
-                        item['rescued'] = True
-                        # Ensure legitimacy score is at least the keep threshold
-                        from python_scraper.config import MIN_LEGITIMACY_TO_KEEP
-                        item['legitimacy_score'] = max(MIN_LEGITIMACY_TO_KEEP, item.get('legitimacy_score', 50) + 15)
-                        logger.info(f"[Description Rescue] Rescued borderline role: '{item.get('role')}' at '{item.get('company_name')}' with matched keywords {matched_rescue}")
-                    else:
-                        logger.info(f"[Description Rescue] Failed to rescue borderline role: '{item.get('role')}' at '{item.get('company_name')}' (only matched {matched_rescue})")
-                        return None
-                else:
-                    logger.info(f"[Description Rescue] Failed to rescue borderline role: '{item.get('role')}' at '{item.get('company_name')}' (empty page HTML)")
-                    return None
+                item['confidence'] = 'MEDIUM'
+                item['rescued'] = True
+                # Ensure legitimacy score is at least the keep threshold
+                from python_scraper.config import MIN_LEGITIMACY_TO_KEEP
+                item['legitimacy_score'] = max(MIN_LEGITIMACY_TO_KEEP, item.get('legitimacy_score', 50) + 15)
+                logger.info(f"[Description Rescue] Rescued borderline role: '{item.get('role')}' at '{item.get('company_name')}' (Relevance score {relevance})")
             
         return item
 
