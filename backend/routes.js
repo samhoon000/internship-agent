@@ -202,12 +202,14 @@ router.get('/internships', async (req, res) => {
       });
     }
 
-    // Skills filter (matches ALL selected skills)
+    // Skills filter (matches ALL selected skills via substring overlaps)
     if (skills) {
       const selectedSkills = skills.split(',').map(s => s.trim().toLowerCase());
       data = data.filter(row => {
         const jobSkills = row.skills_list.map(s => s.toLowerCase());
-        return selectedSkills.every(skill => jobSkills.includes(skill));
+        return selectedSkills.every(skill => 
+          jobSkills.some(js => js.includes(skill) || skill.includes(js))
+        );
       });
     }
 
@@ -271,9 +273,18 @@ router.get('/internships', async (req, res) => {
       formattedInternships.sort((a, b) => b.match_score - a.match_score || new Date(b.posted_at || b.created_at) - new Date(a.posted_at || a.created_at));
     } else if (sort === 'stipend') {
       formattedInternships.sort((a, b) => b.stipend_numeric - a.stipend_numeric || new Date(b.posted_at || b.created_at) - new Date(a.posted_at || a.created_at));
+    } else if (sort === 'remote_first') {
+      formattedInternships.sort((a, b) => {
+        const aRemote = a.remote === 1 || (a.location && (a.location.toLowerCase().includes('remote') || a.location.toLowerCase().includes('work from home'))) ? 1 : 0;
+        const bRemote = b.remote === 1 || (b.location && (b.location.toLowerCase().includes('remote') || b.location.toLowerCase().includes('work from home'))) ? 1 : 0;
+        return bRemote - aRemote || new Date(b.posted_at || b.created_at) - new Date(a.posted_at || a.created_at);
+      });
+    } else if (sort === 'company') {
+      formattedInternships.sort((a, b) => (a.company_name || '').localeCompare(b.company_name || ''));
     } else if (sort === 'recently_added') {
       formattedInternships.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
     } else {
+      // newest
       formattedInternships.sort((a, b) => new Date(b.posted_at || b.created_at) - new Date(a.posted_at || a.created_at));
     }
 

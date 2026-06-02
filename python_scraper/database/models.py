@@ -14,20 +14,20 @@ class Internship(Base):
     company_name = Column(String(255), nullable=False)
     role = Column(String(255), nullable=False)
     stipend = Column(String(100), nullable=True)
-    paid = Column(Boolean, default=False, nullable=False)
+    paid = Column(Boolean, default=False, nullable=False, index=True)
     location = Column(String(255), nullable=True)
-    remote = Column(Boolean, default=False, nullable=False)
+    remote = Column(Boolean, default=False, nullable=False, index=True)
     duration = Column(String(100), nullable=True)
     skills = Column(String(500), nullable=True)  # Stored as comma-separated text
-    source = Column(String(100), nullable=False)
-    legitimacy_score = Column(Integer, default=50, nullable=False)
-    stipend_numeric = Column(Integer, default=0, nullable=False)
-    posted_at = Column(DateTime, nullable=True)
-    freshness_score = Column(Integer, default=0, nullable=False)
-    confidence = Column(String(50), default="HIGH", nullable=False)
+    source = Column(String(100), nullable=False, index=True)
+    legitimacy_score = Column(Integer, default=50, nullable=False, index=True)
+    stipend_numeric = Column(Integer, default=0, nullable=False, index=True)
+    posted_at = Column(DateTime, nullable=True, index=True)
+    freshness_score = Column(Integer, default=0, nullable=False, index=True)
+    confidence = Column(String(50), default="HIGH", nullable=False, index=True)
     description = Column(String(5000), nullable=True)  # Stored text description
-    relevance_score = Column(Integer, default=0, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    relevance_score = Column(Integer, default=0, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
     def to_dict(self):
         """Helper to convert model instance to dictionary."""

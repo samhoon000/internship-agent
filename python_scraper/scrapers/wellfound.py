@@ -47,6 +47,16 @@ class WellfoundScraper(BaseScraper):
             
             await asyncio.sleep(random.uniform(1.0, 2.5))
             
+            # Detect Cloudflare or DataDome CAPTCHA blocking
+            title = await page.title()
+            html = await page.content()
+            if (any(term in title for term in ["Cloudflare", "Just a moment", "Please verify", "Attention Required"]) or
+                "captcha-delivery.com" in html or "datadome" in html.lower() or "captcha" in html.lower()):
+                logger.error(f"[Wellfound] Blocked by Cloudflare/DataDome challenge. Title: '{title}'")
+                await self.save_debug_artifacts(page, "wellfound_blocked")
+                self.blocked = True
+                return []
+                
             logger.info("[Wellfound] Simulating scroll loading...")
             for _ in range(3):
                 scroll_distance = random.randint(300, 600)
@@ -84,17 +94,16 @@ class WellfoundScraper(BaseScraper):
                 soup.select('[class*="styles_result__"]') or 
                 soup.select('[class*="styles_jobCard__"]') or
                 soup.select('[class*="styles_startupCard__"]') or
+                soup.select('[class*="styles_component__"]') or
+                soup.select('[class*="styles_resultCard__"]') or
                 soup.select('article') or
                 soup.select('div[role="listitem"]')
             )
             logger.info(f"[Wellfound] Found {len(job_cards)} job cards in DOM.")
             
             if not job_cards:
-                logger.warning("[Wellfound] No job cards found. Saving debug screenshot.")
-                try:
-                    await page.screenshot(path="debug_screenshots/wellfound_empty.png")
-                except Exception as screenshot_err:
-                    logger.debug(f"[Wellfound] Screenshot fail: {screenshot_err}")
+                logger.warning("[Wellfound] No job cards found. Saving debug artifacts.")
+                await self.save_debug_artifacts(page, "wellfound_empty_cards")
             
             for card in job_cards:
                 try:
@@ -106,7 +115,10 @@ class WellfoundScraper(BaseScraper):
                         card.select_one('.styles_title__') or 
                         card.select_one('a[href*="/jobs/"]') or
                         card.select_one('[class*="job-title"]') or
-                        card.select_one('[class*="job-name"]')
+                        card.select_one('[class*="job-name"]') or
+                        card.select_one('[class*="styles_title__"]') or
+                        card.select_one('h2') or
+                        card.select_one('h3')
                     )
                     role = role_el.text.strip() if role_el else ""
                     
@@ -117,22 +129,37 @@ class WellfoundScraper(BaseScraper):
                         card.select_one('[data-test*="company"]') or 
                         card.select_one('.styles_name__') or
                         card.select_one('[class*="company-name"]') or
-                        card.select_one('[class*="startup-name"]')
+                        card.select_one('[class*="startup-name"]') or
+                        card.select_one('[class*="styles_name__"]') or
+                        card.select_one('h4') or
+                        card.select_one('.styles_startupName__') or
+                        card.select_one('[class*="startupName"]')
                     )
                     company_name = company_el.text.strip() if company_el else ""
                     
-                    link_el = card.select_one('a[href*="/jobs/"]') or card.select_one('a')
+                    link_el = card.select_one('a[href*="/jobs/"]') or card.select_one('a[href*="/company/"]') or card.select_one('a')
                     apply_link = link_el['href'] if link_el and 'href' in link_el.attrs else ""
                     if apply_link and not apply_link.startswith('http'):
                         apply_link = f"https://wellfound.com{apply_link}"
                         
                     stipend = ""
-                    salary_el = card.select_one('[data-test="compensation"]') or card.select_one('.styles_salary__')
+                    salary_el = (
+                        card.select_one('[data-test="compensation"]') or 
+                        card.select_one('.styles_salary__') or
+                        card.select_one('[class*="salary"]') or
+                        card.select_one('[class*="compensation"]') or
+                        card.select_one('[class*="compensation__"]')
+                    )
                     if salary_el:
                         stipend = salary_el.text.strip()
                         
                     location = ""
-                    loc_el = card.select_one('[data-test="location"]') or card.select_one('.styles_location__')
+                    loc_el = (
+                        card.select_one('[data-test="location"]') or 
+                        card.select_one('.styles_location__') or
+                        card.select_one('[class*="location"]') or
+                        card.select_one('[class*="location__"]')
+                    )
                     if loc_el:
                         location = loc_el.text.strip()
                     
@@ -140,7 +167,8 @@ class WellfoundScraper(BaseScraper):
                     tags_el = (
                         card.select('[class*="styles_tag__"]') or 
                         card.select('[data-test="job-tag"]') or
-                        card.select('.styles_tag__')
+                        card.select('.styles_tag__') or
+                        card.select('[class*="tag"]')
                     )
                     for tag in tags_el:
                         skills_found.append(tag.text.strip())
@@ -164,6 +192,13 @@ class WellfoundScraper(BaseScraper):
                     elif "yesterday" in card_text:
                         posted_at = datetime.utcnow() - timedelta(days=1)
                     
+                    if not role:
+                        logger.warning("[Wellfound] Missing role title for card.")
+                    if not company_name:
+                        logger.warning("[Wellfound] Missing company name for card.")
+                    if not apply_link:
+                        logger.warning("[Wellfound] Missing apply link for card.")
+
                     if role and company_name and apply_link:
                         results.append({
                             "company_name": company_name,
@@ -179,6 +214,10 @@ class WellfoundScraper(BaseScraper):
                 except Exception as e:
                     logger.error(f"[Wellfound] Error parsing job listing card: {e}")
                     continue
+                    
+            if job_cards and not results:
+                logger.warning("[Wellfound] Job cards were found but no internships were successfully parsed. Saving debug artifacts.")
+                await self.save_debug_artifacts(page, "wellfound_failed_parsing")
         except Exception as e:
             logger.error(f"[Wellfound] Playwright scraping failed: {e}", exc_info=True)
         finally:

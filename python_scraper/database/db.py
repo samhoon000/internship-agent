@@ -129,33 +129,58 @@ def save_internships(internship_dicts, stats_dict=None):
     """
     Saves a list of internship dictionaries to the database.
     Prevents duplicates by checking against memory sets of existing records (apply_link and company_name + role + location hash).
+    Supports updating existing records if new fields are better or changed.
     Uses SQLAlchemy bulk_insert_mappings for high performance database writes.
     """
-    import hashlib
     session = get_db_session()
     saved_count = 0
+    updated_count = 0
     skipped_count = 0
     rejected_low_confidence = 0
     rejected_malformed = 0
 
-    def get_dedup_hash(comp: str, role_title: str, loc: str) -> str:
-        c = (comp or "").lower().strip()
-        r = (role_title or "").lower().strip()
-        l = (loc or "").lower().strip()
-        raw = f"{c}||{r}||{l}"
-        return hashlib.md5(raw.encode('utf-8')).hexdigest()
+    def get_canonical_key(comp: str, role_title: str) -> str:
+        # Normalize company name (remove common suffixes and non-alphanumeric)
+        c = (comp or "").lower()
+        c = re.sub(r"\b(pvt|private|ltd|limited|inc|llc|corp|corporation|co|company)\b", "", c)
+        c = re.sub(r"[^a-z0-9]", "", c).strip()
+        
+        # Normalize role title (remove words like 'internship', 'intern', 'co-op', and extra whitespace)
+        r = (role_title or "").lower()
+        r = re.sub(r"\b(internship|intern|co-op|coop|temporary|part-time|full-time)\b", "", r)
+        r = re.sub(r"[^a-z0-9]", "", r).strip()
+        
+        return f"{c}||{r}"
+
+    def normalize_url(url_str: str) -> str:
+        if not url_str:
+            return ""
+        from urllib.parse import urlparse
+        try:
+            parsed = urlparse(url_str)
+            normalized = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+            return normalized.lower().strip()
+        except Exception:
+            return url_str.lower().strip()
 
     from python_scraper.config import MIN_LEGITIMACY_TO_KEEP
 
     try:
-        # Load all existing links and combos into memory sets
-        existing_links = {r[0] for r in session.query(Internship.apply_link).all()}
-        existing_combos = {get_dedup_hash(r[0], r[1], r[2]) 
-                           for r in session.query(Internship.company_name, Internship.role, Internship.location).all() if r[0] and r[1]}
+        # Load all existing records from DB
+        existing_jobs = {job.apply_link: job for job in session.query(Internship).all()}
+        
+        # Map canonical keys and normalized URLs to existing apply_links
+        existing_combos_map = {}
+        for link, job in existing_jobs.items():
+            ckey = get_canonical_key(job.company_name, job.role)
+            existing_combos_map[ckey] = link
+            
+            norm_link = normalize_url(link)
+            if norm_link:
+                existing_combos_map[norm_link] = link
 
         to_insert = []
         
-        # Sort incoming data to process newest first (so if duplicates exist in incoming, we keep the newest)
         for item in internship_dicts:
             apply_link = item.get('apply_link')
             company_name = item.get('company_name', '').strip()
@@ -179,19 +204,20 @@ def save_internships(internship_dicts, stats_dict=None):
                 rejected_low_confidence += 1
                 continue
 
-            combo = get_dedup_hash(company_name, role, item.get('location'))
+            normalized_input_link = normalize_url(apply_link)
+            ckey = get_canonical_key(company_name, role)
 
-            # Dedup check
-            if apply_link in existing_links or combo in existing_combos:
-                skipped_count += 1
-                if stats_dict is not None:
-                    stats_dict[source]['skipped'] += 1
-                continue
+            # Check if this job exists in the DB (via direct link, normalized link, or canonical key)
+            matched_link = None
+            if apply_link in existing_jobs:
+                matched_link = apply_link
+            elif normalized_input_link in existing_combos_map:
+                matched_link = existing_combos_map[normalized_input_link]
+            elif ckey in existing_combos_map:
+                matched_link = existing_combos_map[ckey]
 
-            # Prepare for insertion
+            # Prepare fields
             stipend_numeric = parse_stipend_to_numeric(item.get('stipend'))
-            
-            # Parse or set posted_at
             posted_at = item.get('posted_at')
             if isinstance(posted_at, str):
                 try:
@@ -201,7 +227,7 @@ def save_internships(internship_dicts, stats_dict=None):
             elif not posted_at:
                 posted_at = datetime.utcnow()
 
-            # Calculate initial freshness score
+            # Calculate freshness score
             age_hours = (datetime.utcnow() - posted_at).total_seconds() / 3600.0
             if age_hours <= 24:
                 freshness = 100
@@ -212,6 +238,54 @@ def save_internships(internship_dicts, stats_dict=None):
             else:
                 freshness = 0
 
+            if matched_link:
+                if matched_link not in existing_jobs:
+                    # Duplicate within the same scraper batch (already queued for insertion)
+                    skipped_count += 1
+                    if stats_dict is not None:
+                        stats_dict[source]['skipped'] += 1
+                    continue
+
+                # Update existing record
+                existing_record = existing_jobs[matched_link]
+                changed = False
+
+                if item.get('stipend') and existing_record.stipend != item.get('stipend'):
+                    existing_record.stipend = item.get('stipend')
+                    existing_record.stipend_numeric = stipend_numeric
+                    changed = True
+                if item.get('location') and existing_record.location != item.get('location'):
+                    existing_record.location = item.get('location')
+                    changed = True
+                if item.get('skills') and existing_record.skills != item.get('skills'):
+                    existing_record.skills = item.get('skills')
+                    changed = True
+                if score > existing_record.legitimacy_score:
+                    existing_record.legitimacy_score = score
+                    changed = True
+                if item.get('confidence') and existing_record.confidence != item.get('confidence'):
+                    existing_record.confidence = item.get('confidence')
+                    changed = True
+                if item.get('description') and existing_record.description != item.get('description'):
+                    existing_record.description = item.get('description')
+                    changed = True
+                if item.get('relevance_score', 0) > existing_record.relevance_score:
+                    existing_record.relevance_score = item.get('relevance_score', 0)
+                    changed = True
+
+                existing_record.freshness_score = freshness
+
+                if changed:
+                    updated_count += 1
+                    if stats_dict is not None:
+                        stats_dict[source]['updated'] += 1
+                else:
+                    skipped_count += 1
+                    if stats_dict is not None:
+                        stats_dict[source]['skipped'] += 1
+                continue
+
+            # Prepare for insertion
             new_record = {
                 "apply_link": apply_link,
                 "company_name": company_name,
@@ -234,9 +308,9 @@ def save_internships(internship_dicts, stats_dict=None):
             }
             to_insert.append(new_record)
             
-            # Keep memory sets updated in case duplicates exist within the batch itself
-            existing_links.add(apply_link)
-            existing_combos.add(combo)
+            # Keep memory mapping updated to prevent internal batch duplicates
+            existing_combos_map[normalized_input_link] = apply_link
+            existing_combos_map[ckey] = apply_link
             
             saved_count += 1
             if stats_dict is not None:
@@ -244,10 +318,10 @@ def save_internships(internship_dicts, stats_dict=None):
 
         if to_insert:
             session.bulk_insert_mappings(Internship, to_insert)
-            session.commit()
-            
-        logger.info(f"Database sync complete. Bulk inserted: {saved_count}, Skipped/Duplicates: {skipped_count}, Rejected low-confidence: {rejected_low_confidence}, Rejected malformed: {rejected_malformed}")
-        return saved_count, 0, skipped_count
+        
+        session.commit()
+        logger.info(f"Database sync complete. Bulk inserted: {saved_count}, Updated: {updated_count}, Skipped/Duplicates: {skipped_count}, Rejected low-confidence: {rejected_low_confidence}, Rejected malformed: {rejected_malformed}")
+        return saved_count, updated_count, skipped_count
 
     except Exception as e:
         session.rollback()

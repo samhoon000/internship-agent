@@ -57,27 +57,35 @@ class IndeedScraper(BaseScraper):
                 await asyncio.sleep(random.uniform(0.3, 0.7))
             
             try:
-                await page.wait_for_selector('.job_seen_beacon', timeout=5000)
+                await page.wait_for_selector('.job_seen_beacon, div.cardOutline, [class*="job_seen_beacon"], td.resultContent', timeout=5000)
             except Exception:
-                logger.warning(f"[Indeed India] Selector '.job_seen_beacon' not found on page {page_num + 1}.")
+                logger.warning(f"[Indeed India] Selector '.job_seen_beacon' fallback not found on page {page_num + 1}.")
             
             html = await page.content()
             soup = BeautifulSoup(html, 'html.parser')
-            job_cards = soup.select('.job_seen_beacon')
+            job_cards = (
+                soup.select('.job_seen_beacon') or 
+                soup.select('div.cardOutline') or 
+                soup.select('[class*="job_seen_beacon"]') or 
+                soup.select('td.resultContent')
+            )
             
             logger.info(f"[Indeed India] Found {len(job_cards)} job cards on page {page_num + 1}.")
             
             if not job_cards:
-                logger.warning(f"[Indeed India] No job cards found on page {page_num + 1}. Saving screenshot.")
-                try:
-                    await page.screenshot(path=f"debug_screenshots/indeed_empty_p{page_num+1}.png")
-                except Exception as screenshot_err:
-                    logger.debug(f"[Indeed India] Screenshot fail: {screenshot_err}")
+                logger.warning(f"[Indeed India] No job cards found on page {page_num + 1}. Saving debug artifacts.")
+                await self.save_debug_artifacts(page, f"indeed_empty_p{page_num+1}")
                 return []
                 
             for card in job_cards:
                 try:
-                    role_el = card.select_one('h2.jobTitle a') or card.select_one('h2.jobTitle span')
+                    role_el = (
+                        card.select_one('a.jcs-JobTitle') or
+                        card.select_one('h2.jobTitle a') or
+                        card.select_one('h2.jobTitle span') or
+                        card.select_one('[class*="jobTitle"] a') or
+                        card.select_one('a[id^="job_"]')
+                    )
                     role = ""
                     apply_link = ""
                     
@@ -85,25 +93,56 @@ class IndeedScraper(BaseScraper):
                         role = role_el.text.strip()
                         if 'href' in role_el.attrs:
                             apply_link = f"https://in.indeed.com{role_el['href']}"
+                    else:
+                        logger.warning("[Indeed India] Missing field: role/title element not found in card.")
+
+                    if not apply_link:
+                        other_a = card.select_one('a[href*="/rc/clk"]') or card.select_one('a[href*="/company/"]')
+                        if other_a and 'href' in other_a.attrs:
+                            apply_link = f"https://in.indeed.com{other_a['href']}"
+                        else:
+                            logger.warning("[Indeed India] Missing field: apply_link not found in card.")
                             
-                    company_el = card.select_one('[data-testid="company-name"]') or card.select_one('.companyName')
+                    company_el = (
+                        card.select_one('[data-testid="company-name"]') or 
+                        card.select_one('.companyName') or
+                        card.select_one('[class*="companyName"]') or
+                        card.select_one('.company_location [class*="companyName"]')
+                    )
                     company_name = company_el.text.strip() if company_el else ""
+                    if not company_name:
+                        logger.warning("[Indeed India] Missing field: company name element not found in card.")
                     
-                    location_el = card.select_one('[data-testid="text-location"]') or card.select_one('.companyLocation')
+                    location_el = (
+                        card.select_one('[data-testid="text-location"]') or 
+                        card.select_one('.companyLocation') or
+                        card.select_one('[class*="companyLocation"]') or
+                        card.select_one('[class*="location"]')
+                    )
                     location = location_el.text.strip() if location_el else "India"
+                    if not location_el:
+                        logger.warning("[Indeed India] Missing field: location element not found in card (defaulted to India).")
                     
                     stipend = ""
-                    salary_el = card.select_one('.salary-snippet-container') or card.select_one('.metadata.salarySnippet')
+                    salary_el = (
+                        card.select_one('.salary-snippet-container') or 
+                        card.select_one('.metadata.salarySnippet') or
+                        card.select_one('[class*="salary"]') or
+                        card.select_one('[class*="metadata"]')
+                    )
                     if salary_el:
                         stipend = salary_el.text.strip()
                         
                     skills = []
-                    desc_el = card.select_one('.job-snippet')
+                    desc_el = card.select_one('.job-snippet') or card.select_one('[class*="job-snippet"]') or card.select_one('#jobDescriptionText')
                     if desc_el:
                         desc_text = desc_el.text.lower()
-                        for kw in ["python", "sql", "aws", "react", "javascript", "node", "django", "flask", "ml", "ai"]:
-                            if kw in desc_text:
-                                skills.append(kw.capitalize())
+                        from python_scraper.config import BOOST_SKILLS
+                        for skill in BOOST_SKILLS:
+                            if f" {skill} " in f" {desc_text} " or skill in desc_text:
+                                skills.append(skill.capitalize())
+                    else:
+                        logger.warning("[Indeed India] Missing field: job snippet/description element not found in card.")
                                 
                     skills_str = ", ".join(skills) if skills else ""
                     duration = ""
@@ -124,7 +163,7 @@ class IndeedScraper(BaseScraper):
                         page_results.append({
                             "company_name": company_name,
                             "role": role,
-                            "stipend": stipend,
+                            "stipend": stipend if stipend else "Unspecified",
                             "location": location,
                             "duration": duration,
                             "skills": skills_str,
@@ -153,7 +192,10 @@ class IndeedScraper(BaseScraper):
         session_seen_links = set()
         page_num = 0
         
-        while page_num < 10:  # safety cap of 10 pages
+        from python_scraper.config import PAGES_TO_SCRAPE
+        page_limit = PAGES_TO_SCRAPE or 3
+        
+        while page_num < page_limit:
             page_results = await self.scrape_page(browser_context, query, page_num)
             if not page_results:
                 logger.info(f"[Indeed India] Page {page_num + 1} returned no listings. Stopping pagination.")

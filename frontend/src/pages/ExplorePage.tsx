@@ -337,7 +337,9 @@ export default function ExplorePage() {
           >
             <option value="newest">Newest First</option>
             <option value="stipend">Highest Stipend</option>
-            <option value="legitimacy">Highest Legitimacy</option>
+            <option value="remote_first">Remote First</option>
+            <option value="company">Company Name (A-Z)</option>
+            <option value="legitimacy">Highest Match</option>
             <option value="recently_added">Recently Added</option>
           </select>
           

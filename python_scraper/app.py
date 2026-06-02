@@ -27,6 +27,8 @@ logger = logging.getLogger("python_scraper.app")
 
 async def run_agent_cycle():
     """Runs a single iteration of all scraper modules and logs consolidated metrics."""
+    import time
+    start_time = time.time()
     logger.info("=== Starting AI Internship Discovery Cycle ===")
     
     from playwright.async_api import async_playwright
@@ -74,52 +76,76 @@ async def run_agent_cycle():
         await browser.close()
         logger.info("Headless Chromium browser instance closed successfully.")
             
-    # Calculate consolidated production metrics
-    total_scraped = sum(s.scraped_count for s in scrapers)
-    total_suspicious = sum(s.rejected_suspicious + s.score_below_threshold for s in scrapers)
-    total_broken = sum(s.broken_urls for s in scrapers)
-    blocked_sources = sum(1 for s in scrapers if s.blocked)
-    
     logger.info("Saving results to SQL database and applying deduplication...")
     
     # Save to database
     stats = {}
     added, updated, skipped = save_internships(all_scraped_items, stats_dict=stats)
     
-    # Extract and log detailed Internshala metrics
-    internshala_scraper = next((s for s in scrapers if s.source_name == "Internshala"), None)
-    if internshala_scraper:
-        ishala_stats = stats.get("Internshala", {"added": 0, "updated": 0, "skipped": 0})
-        ishala_report = f"""
-========================================================
-INTERNSHALA DETAILED REPORT
-========================================================
-Pages scraped: {getattr(internshala_scraper, 'pages_scraped', 0)}
-Raw internships found: {internshala_scraper.scraped_count}
-Rejected unpaid: {internshala_scraper.unpaid_or_cert}
-Rejected suspicious companies: {internshala_scraper.rejected_suspicious + internshala_scraper.score_below_threshold}
-Broken URLs: {internshala_scraper.broken_urls}
-Inserted into SQL: {ishala_stats['added']}
-========================================================
-"""
-        logger.info(ishala_report)
-        print(ishala_report)
+    # Calculate detailed metrics per scraper
+    ishala_scraper = next((s for s in scrapers if s.source_name == "Internshala"), None)
+    wellfound_scraper = next((s for s in scrapers if s.source_name == "Wellfound"), None)
+    indeed_scraper = next((s for s in scrapers if s.source_name == "Indeed India"), None)
+    yc_scraper = next((s for s in scrapers if s.source_name == "YC Jobs"), None)
+    
+    ishala_stats = stats.get("Internshala", {"added": 0, "updated": 0, "skipped": 0})
+    wellfound_stats = stats.get("Wellfound", {"added": 0, "updated": 0, "skipped": 0})
+    indeed_stats = stats.get("Indeed India", {"added": 0, "updated": 0, "skipped": 0})
+    yc_stats = stats.get("YC Jobs", {"added": 0, "updated": 0, "skipped": 0})
+    
+    ishala_raw = ishala_scraper.scraped_count if ishala_scraper else 0
+    ishala_role = ishala_scraper.non_tech_roles if ishala_scraper else 0
+    ishala_unpaid = ishala_scraper.unpaid_or_cert if ishala_scraper else 0
+    ishala_dup = ishala_stats.get('skipped', 0)
+    ishala_company = ishala_scraper.rejected_suspicious if ishala_scraper else 0
+    ishala_accepted = len(results[scrapers.index(ishala_scraper)]) if ishala_scraper and ishala_scraper in scrapers else 0
+    
+    wellfound_raw = wellfound_scraper.scraped_count if wellfound_scraper else 0
+    wellfound_accepted = len(results[scrapers.index(wellfound_scraper)]) if wellfound_scraper and wellfound_scraper in scrapers else 0
+    
+    indeed_raw = indeed_scraper.scraped_count if indeed_scraper else 0
+    indeed_accepted = len(results[scrapers.index(indeed_scraper)]) if indeed_scraper and indeed_scraper in scrapers else 0
+    
+    yc_raw = yc_scraper.scraped_count if yc_scraper else 0
+    yc_accepted = len(results[scrapers.index(yc_scraper)]) if yc_scraper and yc_scraper in scrapers else 0
 
-    # print and log production metrics exactly as requested
-    metrics_report = f"""
-========================================================
-PRODUCTION METRICS REPORT
-========================================================
-Real internships scraped: {total_scraped}
-Rejected suspicious internships: {total_suspicious}
-Broken URLs rejected: {total_broken}
-Blocked sources: {blocked_sources}
-Duplicates skipped: {skipped}
-Inserted into SQL: {added}
-========================================================
+    elapsed = time.time() - start_time
+    minutes = int(elapsed // 60)
+    seconds = int(elapsed % 60)
+    runtime_str = f"{minutes}m {seconds}s" if minutes > 0 else f"{seconds}s"
+
+    total_scraped = ishala_raw + wellfound_raw + indeed_raw + yc_raw
+    total_accepted = ishala_accepted + wellfound_accepted + indeed_accepted + yc_accepted
+
+    summary_report = f"""
+Internshala Summary
+Raw Scraped: {ishala_raw}
+Rejected Role: {ishala_role}
+Rejected Unpaid: {ishala_unpaid}
+Rejected Duplicate: {ishala_dup}
+Rejected Company: {ishala_company}
+Accepted: {ishala_accepted}
+
+Wellfound Summary
+Raw Scraped: {wellfound_raw}
+Accepted: {wellfound_accepted}
+
+Indeed Summary
+Raw Scraped: {indeed_raw}
+Accepted: {indeed_accepted}
+
+YC Jobs Summary
+Raw Scraped: {yc_raw}
+Accepted: {yc_accepted}
+
+Overall Summary
+Total Scraped: {total_scraped}
+Total Accepted: {total_accepted}
+Total Inserted: {added}
+Runtime: {runtime_str}
 """
-    logger.info(metrics_report)
-    print(metrics_report)
+    logger.info(summary_report)
+    print(summary_report)
     
     logger.info(f"=== Cycle Finished. Added: {added}, Updated: {updated}, Unchanged/Skipped: {skipped} ===")
     return added, updated, skipped

@@ -55,8 +55,7 @@ ROLE_CONTEXT_KEYWORDS = [
 ]
 
 ROLE_HARD_EXCLUDE_KEYWORDS = [
-    "marketing", "seo", "wordpress", "react", "node", "frontend", "backend",
-    "full stack", "sales", "hr", "customer support", "content writing",
+    "marketing", "seo", "sales", "hr", "customer support", "content writing",
     "social media", "recruiting", "talent acquisition", "telecalling",
     "telecaller", "bda", "bde", "receptionist", "graphic design",
     "human resources", "educational consultant", "copywriter", "interior designer",
@@ -66,7 +65,7 @@ ROLE_HARD_EXCLUDE_KEYWORDS = [
 ROLE_SOFT_EXCLUDE_KEYWORDS = [
     "software developer", "software engineer", "web development", "wordpress", "flutter",
     "java developer", "android", "ios", "ui ux", "campus ambassador",
-    "business development"
+    "business development", "react", "node", "frontend", "backend", "full stack"
 ]
 
 STRONG_TECH_KEYWORDS = ROLE_WHITELIST_KEYWORDS
@@ -102,12 +101,8 @@ SOURCE_DOMAIN_MAP = {
 # ── Suspicious Company Name Patterns ──────────────────────────────
 # Heuristic patterns that indicate a generated / hallucinated company name.
 SUSPICIOUS_COMPANY_PATTERNS = [
-    "techcorp", "ai labs inc", "futuretech", "neural ai corp",
-    "tech solutions", "global tech", "digital solutions",
-    "innovation labs", "synergy", "nexgen", "quantum solutions",
-    "alpha tech", "beta systems", "dummy", "test company",
-    "sample corp", "example inc", "fake", "placeholder",
-    "lorem ipsum", "acme corp", "xyz company", "abc technologies",
+    "dummy", "test company", "sample corp", "example inc", "fake", "placeholder",
+    "lorem ipsum", "acme corp",
 ]
 
 # ── Legitimacy Scoring Settings ───────────────────────────────────

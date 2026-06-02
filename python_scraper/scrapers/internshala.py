@@ -165,6 +165,12 @@ class InternshalaScraper(BaseScraper):
                     logger.warning(f"[Internshala] Navigation status code {status} for {url} (Attempt {attempt}/{total_attempts}).")
             except Exception as e:
                 logger.warning(f"[Internshala] Navigation failed on attempt {attempt}/{total_attempts}: {e}")
+                # Disable route resource blocking on retry for better reliability
+                try:
+                    await page.unroute("**/*")
+                    logger.info("[Internshala] Disabling route blocking for subsequent navigation attempts.")
+                except Exception:
+                    pass
             
             if attempt < total_attempts:
                 sleep_time = delays[attempt - 1]
@@ -329,7 +335,20 @@ class InternshalaScraper(BaseScraper):
         try:
             success = await self.safe_navigate(page, url)
             if not success:
-                logger.error(f"[Internshala] [Category: {cat} | Page {page_num}] Failed to load page: {url}")
+                # Try fallback search URL
+                fallback_keywords = cat.replace("-internship", "")
+                fallback_url = f"https://internshala.com/internships/keywords-{fallback_keywords}/page-{page_num}/"
+                logger.info(f"[Internshala] Primary URL failed. Retrying with fallback search URL: {fallback_url}")
+                
+                # Re-apply routing block
+                try:
+                    await page.route("**/*", block_resources)
+                except Exception:
+                    pass
+                success = await self.safe_navigate(page, fallback_url)
+                
+            if not success:
+                logger.error(f"[Internshala] Both primary and fallback URLs failed for category '{cat}' page {page_num}.")
                 return []
 
             await self.handle_popup(page)
@@ -373,39 +392,46 @@ class InternshalaScraper(BaseScraper):
         session_seen_links = set()
         total_pages_scraped = 0
 
+        from python_scraper.config import PAGES_TO_SCRAPE
+        page_limit = PAGES_TO_SCRAPE or 3
+
         for cat in categories:
-            page_num = 1
-            logger.info(f"[Internshala] Starting category: {cat}")
-            
-            while page_num <= 10:  # safety cap
-                page_results = await self.scrape_page(browser_context, cat, page_num)
-                if not page_results:
-                    logger.info(f"[Internshala] [Category: {cat}] Page {page_num} returned no listings. Stopping pagination.")
-                    break
+            try:
+                page_num = 1
+                logger.info(f"[Internshala] Starting category: {cat}")
                 
-                total_pages_scraped += 1
-                total_items = len(page_results)
-                dup_items = 0
-                
-                for item in page_results:
-                    link = item.get('apply_link')
-                    # Check if exists in DB or already seen in this session
-                    if link in self.existing_links or link in session_seen_links:
-                        dup_items += 1
-                    else:
-                        session_seen_links.add(link)
-                
-                all_results.extend(page_results)
-                
-                # Check duplicate saturation
-                saturation = dup_items / total_items if total_items > 0 else 0
-                logger.info(f"[Internshala] [Category: {cat} | Page {page_num}] Saturation: {saturation:.1%} ({dup_items}/{total_items} duplicate items).")
-                
-                if total_items > 0 and saturation > 0.8:
-                    logger.info(f"[Internshala] [Category: {cat}] Duplicate saturation exceeded 80% on page {page_num}. Stopping pagination.")
-                    break
-                
-                page_num += 1
+                while page_num <= page_limit:
+                    page_results = await self.scrape_page(browser_context, cat, page_num)
+                    if not page_results:
+                        logger.info(f"[Internshala] [Category: {cat}] Page {page_num} returned no listings. Stopping pagination.")
+                        break
+                    
+                    total_pages_scraped += 1
+                    total_items = len(page_results)
+                    dup_items = 0
+                    
+                    for item in page_results:
+                        link = item.get('apply_link')
+                        # Check if exists in DB or already seen in this session
+                        if link in self.existing_links or link in session_seen_links:
+                            dup_items += 1
+                        else:
+                            session_seen_links.add(link)
+                    
+                    all_results.extend(page_results)
+                    
+                    # Check duplicate saturation
+                    saturation = dup_items / total_items if total_items > 0 else 0
+                    logger.info(f"[Internshala] [Category: {cat} | Page {page_num}] Saturation: {saturation:.1%} ({dup_items}/{total_items} duplicate items).")
+                    
+                    if total_items > 0 and saturation > 0.8:
+                        logger.info(f"[Internshala] [Category: {cat}] Duplicate saturation exceeded 80% on page {page_num}. Stopping pagination.")
+                        break
+                    
+                    page_num += 1
+            except Exception as cat_err:
+                logger.error(f"[Internshala] Category '{cat}' failed: {cat_err}", exc_info=True)
+                continue
 
         self.pages_scraped = total_pages_scraped
         logger.info(f"[Internshala] Total extracted raw listings: {len(all_results)}")

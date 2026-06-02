@@ -117,7 +117,7 @@ def validate_company(company_name: str) -> tuple[bool, str]:
     Heuristic-based company legitimacy check:
       - Rejects known suspicious / generated company name patterns
       - Checks for extremely short or generic names
-      - Optionally checks if the company domain resolves via DNS
+      - Uses DNS resolution as a verification signal for warning-flagged generic names
     """
     if not company_name or not company_name.strip():
         return False, "company_name is empty"
@@ -134,24 +134,34 @@ def validate_company(company_name: str) -> tuple[bool, str]:
         if pattern in name_lower:
             return False, f"company_name matches suspicious pattern: '{pattern}' in '{name}'"
 
-    # Check for generic naming patterns (e.g., "XYZ Technologies", "ABC Solutions")
-    generic_suffixes = [
-        r"\b(?:pvt|private)\s*(?:ltd|limited)\b",  # common but not inherently suspicious
-    ]
-    # These alone aren't suspicious, but combined with very generic prefixes they are
-    generic_prefixes_re = r"^(?:the\s+)?(?:[a-z]{1,4}\s+)?(?:tech|digital|global|smart|next|future|cyber|virtual|cloud)\s+"
-    if re.search(generic_prefixes_re, name_lower) and len(name.split()) <= 3:
-        return False, f"company_name looks generically generated: '{name}'"
-
-    # DNS check — try to resolve a plausible domain
-    # This is a lightweight heuristic, not a definitive check.
+    # Infer domain and verify DNS resolution
     domain_candidate = _infer_domain(name)
+    domain_resolves = False
     if domain_candidate:
         domain_resolves = _check_dns(domain_candidate)
-        if domain_resolves:
-            return True, f"company '{name}' — domain '{domain_candidate}' resolves"
 
-    # If we can't verify via DNS, accept with a note (don't reject just because DNS fails)
+    # Check for warning keywords (solutions, technologies, labs, innovation)
+    warning_words = ["solutions", "technologies", "labs", "innovation"]
+    has_warning = any(w in name_lower for w in warning_words)
+
+    # Check for generic naming patterns (e.g., "XYZ Technologies", "ABC Solutions")
+    generic_prefixes_re = r"^(?:the\s+)?(?:[a-z]{1,4}\s+)?(?:tech|digital|global|smart|next|future|cyber|virtual|cloud)\s+"
+    is_generic_pattern = bool(re.search(generic_prefixes_re, name_lower) and len(name.split()) <= 3)
+
+    if is_generic_pattern or has_warning:
+        if domain_resolves:
+            return True, f"company '{name}' contains generic/warning patterns but verified via DNS resolving: '{domain_candidate}'"
+        else:
+            # If warning words are present, do not reject based on those terms alone (warn only, accept)
+            if has_warning and not is_generic_pattern:
+                return True, f"company '{name}' contains warning keyword (DNS check unresolved, accepted)"
+            # If it's a generic pattern (e.g. "Next Global Tech") AND fails DNS resolution, reject it
+            return False, f"company_name looks generically generated and failed DNS validation: '{name}'"
+
+    if domain_resolves:
+        return True, f"company '{name}' — domain '{domain_candidate}' resolves"
+
+    # If we can't verify via DNS but it's not a generic pattern or strict placeholder, accept it
     return True, f"company '{name}' — accepted (no DNS verification available)"
 
 
@@ -325,6 +335,11 @@ def validate_payment(paid: bool, stipend: str) -> tuple[bool, str]:
     has_non_zero_digits = any(c.isdigit() and c != '0' for c in stipend_lower)
     if has_non_zero_digits:
         return True, f"stipend has monetary value: '{stipend}'"
+
+    # If stipend contains explicit paid indicators (after excluding reject patterns)
+    paid_indicators = ["stipend", "salary", "competitive", "negotiable", "best in", "industry standard", "market standard", "paid", "allowance", "reimbursement", "incentive"]
+    if any(ind in stipend_lower for ind in paid_indicators):
+        return True, f"stipend contains paid indicator: '{stipend}'"
 
     # Unpaid / unknown
     return False, f"internship appears unpaid (paid={paid}, stipend='{stipend}')"
