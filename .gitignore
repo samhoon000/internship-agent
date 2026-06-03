@@ -38,3 +38,7 @@ Thumbs.db
 .gemini/
 debug_screenshots/
 debug_html/
+*.jsonl
+rejections.jsonl
+__pycache__/
+*.pyc

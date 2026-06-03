@@ -76,11 +76,15 @@ async def run_agent_cycle():
         await browser.close()
         logger.info("Headless Chromium browser instance closed successfully.")
             
+    logger.info("Performing centralized async URL liveness validation and description rescue...")
+    from run import validate_new_items_liveness
+    validated_items = await validate_new_items_liveness(all_scraped_items)
+
     logger.info("Saving results to SQL database and applying deduplication...")
     
     # Save to database
     stats = {}
-    added, updated, skipped = save_internships(all_scraped_items, stats_dict=stats)
+    added, updated, skipped = save_internships(validated_items, stats_dict=stats)
     
     # Calculate detailed metrics per scraper
     ishala_scraper = next((s for s in scrapers if s.source_name == "Internshala"), None)
@@ -98,16 +102,16 @@ async def run_agent_cycle():
     ishala_unpaid = ishala_scraper.unpaid_or_cert if ishala_scraper else 0
     ishala_dup = ishala_stats.get('skipped', 0)
     ishala_company = ishala_scraper.rejected_suspicious if ishala_scraper else 0
-    ishala_accepted = len(results[scrapers.index(ishala_scraper)]) if ishala_scraper and ishala_scraper in scrapers else 0
+    ishala_accepted = sum(1 for item in validated_items if item.get('source') == "Internshala")
     
     wellfound_raw = wellfound_scraper.scraped_count if wellfound_scraper else 0
-    wellfound_accepted = len(results[scrapers.index(wellfound_scraper)]) if wellfound_scraper and wellfound_scraper in scrapers else 0
+    wellfound_accepted = sum(1 for item in validated_items if item.get('source') == "Wellfound")
     
     indeed_raw = indeed_scraper.scraped_count if indeed_scraper else 0
-    indeed_accepted = len(results[scrapers.index(indeed_scraper)]) if indeed_scraper and indeed_scraper in scrapers else 0
+    indeed_accepted = sum(1 for item in validated_items if item.get('source') == "Indeed India")
     
     yc_raw = yc_scraper.scraped_count if yc_scraper else 0
-    yc_accepted = len(results[scrapers.index(yc_scraper)]) if yc_scraper and yc_scraper in scrapers else 0
+    yc_accepted = sum(1 for item in validated_items if item.get('source') == "YC Jobs")
 
     elapsed = time.time() - start_time
     minutes = int(elapsed // 60)
@@ -116,6 +120,14 @@ async def run_agent_cycle():
 
     total_scraped = ishala_raw + wellfound_raw + indeed_raw + yc_raw
     total_accepted = ishala_accepted + wellfound_accepted + indeed_accepted + yc_accepted
+
+    from python_scraper.utils.validators import REJECTION_REASONS_COUNTER
+    rejections_summary = "\nTop Rejection Reasons:\n"
+    if REJECTION_REASONS_COUNTER:
+        for reason, count in REJECTION_REASONS_COUNTER.most_common(5):
+            rejections_summary += f"  - {reason}: {count}\n"
+    else:
+        rejections_summary += "  - No rejections logged during this run.\n"
 
     summary_report = f"""
 Internshala Summary
@@ -143,7 +155,7 @@ Total Scraped: {total_scraped}
 Total Accepted: {total_accepted}
 Total Inserted: {added}
 Runtime: {runtime_str}
-"""
+{rejections_summary}"""
     logger.info(summary_report)
     print(summary_report)
     

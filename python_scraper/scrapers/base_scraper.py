@@ -131,6 +131,9 @@ class BaseScraper(ABC):
             self.blocked = True
             return []
 
+        from python_scraper.utils.validators import log_rejection
+        from python_scraper.scoring.legitimacy import get_legitimacy_bucket
+
         processed_results = []
         self.scraped_count = len(raw_results)
         
@@ -154,17 +157,22 @@ class BaseScraper(ABC):
                         self.unpaid_or_cert += 1
                     elif "[URL]" in reason:
                         self.broken_urls += 1
+                log_rejection(cleaned.get('company_name'), cleaned.get('role'), 0, validation_reasons)
                 continue
                 
             # 3. Apply legitimacy scoring engine
             score = calculate_legitimacy_score(cleaned)
             cleaned['legitimacy_score'] = score
             
-            # 4. Strict SQL insert safety gate check (score must be >= MIN_LEGITIMACY_TO_KEEP (60))
+            if cleaned.get('confidence') != 'NEEDS_RESCUE':
+                cleaned['confidence'] = get_legitimacy_bucket(score)
+            
+            # 4. Strict SQL insert safety gate check (score must be >= MIN_LEGITIMACY_TO_KEEP (45))
             # Relax check for borderline roles awaiting description-based rescue
             if cleaned.get('confidence') != 'NEEDS_RESCUE' and score < MIN_LEGITIMACY_TO_KEEP:
                 logger.warning(f"[{self.source_name}] Internship at '{cleaned.get('company_name')}' rejected: score {score} is below required {MIN_LEGITIMACY_TO_KEEP}")
                 self.score_below_threshold += 1
+                log_rejection(cleaned.get('company_name'), cleaned.get('role'), score, [f"Legitimacy Score Below Threshold ({score} < {MIN_LEGITIMACY_TO_KEEP})"])
                 continue
                 
             processed_results.append(cleaned)

@@ -153,6 +153,54 @@ def calculate_legitimacy_score(item: dict) -> int:
             score -= 20
             break
 
+    # ── AI Keywords Boost (+25) ──
+    ai_kws = ["artificial intelligence", "ai", "machine learning", "ml", "llm", "generative ai", "deep learning", "neural network", "nlp", "computer vision"]
+    has_ai = False
+    for kw in ai_kws:
+        if kw in ["ai", "ml", "llm", "nlp"]:
+            if re.search(r'\b' + re.escape(kw) + r'\b', role):
+                has_ai = True
+                break
+        else:
+            if kw in role:
+                has_ai = True
+                break
+    if has_ai:
+        score += 25
+
+    # ── Data Keywords Boost (+20) ──
+    data_kws = ["data analyst", "business analyst", "mis analyst", "data science", "analytics", "business intelligence", "sql", "data engineer", "data specialist"]
+    has_data = False
+    for kw in data_kws:
+        if kw == "sql":
+            if re.search(r'\b' + re.escape(kw) + r'\b', role):
+                has_data = True
+                break
+        else:
+            if kw in role:
+                has_data = True
+                break
+    if has_data:
+        score += 20
+
+    # ── Research Keywords Boost (+20) ──
+    research_kws = ["research", "research analyst", "quantitative research", "ai research", "research engineer"]
+    if any(kw in role for kw in research_kws):
+        score += 20
+
+    # ── Startup-Aware Boost (+15) ──
+    source = item.get("source", "")
+    is_startup_source = source in ["YC Jobs", "Wellfound"]
+    has_startup_text = "founding" in role or "startup" in role or "labs" in role or "founding" in company or "startup" in company or "labs" in company or company.endswith(".ai") or company.endswith(" ai") or role.endswith(".ai") or role.endswith(" ai")
+    if is_startup_source or has_startup_text:
+        score += 15
+
+    # ── Generic Words Soft Penalty (-10) ──
+    warning_words = ["solutions", "technologies", "labs", "innovation", "innovations", "digital", "systems"]
+    has_warning = any(w in company for w in warning_words)
+    if has_warning and not company_domain_ok:
+        score -= 10
+
     # ── BOUNDS ENFORCEMENT (0–100) ────────────────────────────────
     score = max(0, min(100, score))
     return score
@@ -160,23 +208,20 @@ def calculate_legitimacy_score(item: dict) -> int:
 
 def get_legitimacy_bucket(score: int) -> str:
     """
-    Categorizes the legitimacy score into 5 tiers:
-      90–100  →  Excellent
-      75–89   →  High Confidence
-      60–74   →  Good
-      40–59   →  Risky
-      0–39    →  Reject
+    Categorizes the legitimacy score into 4 confidence classes:
+      80+    → HIGH_CONFIDENCE
+      60-79  → MEDIUM_CONFIDENCE
+      45-59  → LOW_CONFIDENCE
+      <45    → REJECT
     """
-    if score >= 90:
-        return "Excellent"
-    elif score >= 75:
-        return "High Confidence"
+    if score >= 80:
+        return "HIGH_CONFIDENCE"
     elif score >= 60:
-        return "Good"
-    elif score >= 40:
-        return "Risky"
+        return "MEDIUM_CONFIDENCE"
+    elif score >= 45:
+        return "LOW_CONFIDENCE"
     else:
-        return "Reject"
+        return "REJECT"
 
 
 # ── Internal Helpers ──────────────────────────────────────────────

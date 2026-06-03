@@ -17,6 +17,9 @@ import re
 import logging
 import socket
 import requests
+import json
+from pathlib import Path
+from collections import Counter
 from urllib.parse import urlparse
 from rapidfuzz import fuzz
 
@@ -31,6 +34,55 @@ from python_scraper.config import (
 )
 
 logger = logging.getLogger("python_scraper.validators")
+
+REJECTION_REASONS_COUNTER = Counter()
+
+def log_rejection(company: str, role: str, score: int, reasons: list[str]):
+    """
+    Logs a rejected internship in JSON format to a file and updates the rejection reasons counter.
+    """
+    simplified_reasons = []
+    for r in reasons:
+        r_lower = r.lower()
+        if "completeness" in r_lower or "missing required fields" in r_lower:
+            simplified_reasons.append("Missing Critical Fields")
+        elif "role" in r_lower or "relevance" in r_lower:
+            simplified_reasons.append("Low Relevance / Excluded Role")
+        elif "company" in r_lower or "suspicious" in r_lower:
+            simplified_reasons.append("Suspicious / Invalid Company")
+        elif "payment" in r_lower or "unpaid" in r_lower or "commission" in r_lower:
+            simplified_reasons.append("Unpaid / Certificate Only")
+        elif "url" in r_lower or "liveness" in r_lower or "dead link" in r_lower:
+            simplified_reasons.append("Invalid / Dead URL")
+        elif "score" in r_lower or "threshold" in r_lower:
+            simplified_reasons.append("Legitimacy Score Below Threshold")
+        elif "duplicate" in r_lower:
+            simplified_reasons.append("Duplicate")
+        else:
+            simplified_reasons.append("Other Rejection Reason")
+
+    for sr in simplified_reasons:
+        REJECTION_REASONS_COUNTER[sr] += 1
+
+    log_entry = {
+        "company": company or "Unknown Company",
+        "role": role or "Unknown Role",
+        "score": score,
+        "accepted": False,
+        "reasons": reasons
+    }
+
+    rejections_file = Path(__file__).resolve().parent.parent / "rejections.jsonl"
+    try:
+        # Create directories if they do not exist (defensive design)
+        rejections_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(rejections_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps(log_entry) + "\n")
+    except Exception as e:
+        logger.error(f"Failed to write rejection log entry: {e}")
+
+    logger.info(f"[REJECTION LOG] {json.dumps(log_entry)}")
+
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -91,9 +143,9 @@ def validate_url(apply_link: str, source: str, check_liveness: bool = True) -> t
             return True, "URL is live (200)", html_content
         elif 300 <= resp.status_code < 400:
             return True, f"URL redirects ({resp.status_code}) - accepted", html_content
-        elif resp.status_code == 403:
+        elif resp.status_code in [401, 403, 405, 406]:
             # Some sites block GET but page exists; accept with caution
-            return True, "URL returned 403 (may be access-restricted but exists)", html_content
+            return True, f"URL returned {resp.status_code} (access-restricted but exists)", html_content
         elif resp.status_code == 404:
             return False, "URL returned 404 - dead link", ""
         else:
@@ -140,22 +192,21 @@ def validate_company(company_name: str) -> tuple[bool, str]:
     if domain_candidate:
         domain_resolves = _check_dns(domain_candidate)
 
-    # Check for warning keywords (solutions, technologies, labs, innovation)
-    warning_words = ["solutions", "technologies", "labs", "innovation"]
+    # Check for warning keywords (solutions, technologies, labs, innovation, innovations, digital, systems)
+    warning_words = ["solutions", "technologies", "labs", "innovation", "innovations", "digital", "systems"]
     has_warning = any(w in name_lower for w in warning_words)
+
+    if has_warning:
+        return True, f"company '{name}' contains warning keyword (accepted, bypassing strict checks)"
 
     # Check for generic naming patterns (e.g., "XYZ Technologies", "ABC Solutions")
     generic_prefixes_re = r"^(?:the\s+)?(?:[a-z]{1,4}\s+)?(?:tech|digital|global|smart|next|future|cyber|virtual|cloud)\s+"
     is_generic_pattern = bool(re.search(generic_prefixes_re, name_lower) and len(name.split()) <= 3)
 
-    if is_generic_pattern or has_warning:
+    if is_generic_pattern:
         if domain_resolves:
-            return True, f"company '{name}' contains generic/warning patterns but verified via DNS resolving: '{domain_candidate}'"
+            return True, f"company '{name}' contains generic pattern but verified via DNS resolving: '{domain_candidate}'"
         else:
-            # If warning words are present, do not reject based on those terms alone (warn only, accept)
-            if has_warning and not is_generic_pattern:
-                return True, f"company '{name}' contains warning keyword (DNS check unresolved, accepted)"
-            # If it's a generic pattern (e.g. "Next Global Tech") AND fails DNS resolution, reject it
             return False, f"company_name looks generically generated and failed DNS validation: '{name}'"
 
     if domain_resolves:
@@ -235,32 +286,47 @@ def validate_role_quality(role: str, item: dict = None) -> tuple[bool, str]:
             if not any(kw in matched for matched in matched_whitelist):
                 matched_whitelist.append(kw)
 
+    # Override keywords checking
+    override_keywords = [
+        "mis analyst", "data analyst", "ai engineer", "ml engineer", "machine learning",
+        "business intelligence", "data science", "data scientist", "data engineering",
+        "data engineer", "artificial intelligence", "ai research", "quantitative research",
+        "research analyst"
+    ]
+    has_override = False
+    for kw in override_keywords:
+        if matches_keyword(kw, role_lower) or matches_keyword(kw, role_norm):
+            has_override = True
+            if kw not in matched_whitelist:
+                matched_whitelist.append(kw)
+
     # 2. Context matches
     for kw in ROLE_CONTEXT_KEYWORDS:
         if matches_keyword(kw, role_lower) or matches_keyword(kw, role_norm):
             if not any(kw in matched for matched in matched_whitelist):
                 matched_context.append(kw)
 
-    # 3. Exclusions
-    for kw in ROLE_HARD_EXCLUDE_KEYWORDS:
-        if matches_keyword(kw, role_lower) or matches_keyword(kw, role_norm):
-            # Check if this exclusion is balanced by a strong whitelisted keyword
-            # E.g., "Marketing Analytics Intern" contains hard exclude "marketing" and whitelist "analytics"
-            is_balanced = False
-            for wl in matched_whitelist:
-                if "analytics" in wl or "data" in wl or "science" in wl:
-                    is_balanced = True
-            if not is_balanced:
-                matched_hard_exclude.append(kw)
+    # 3. Exclusions (skipped if overridden by a strong whitelist keyword)
+    if not has_override:
+        for kw in ROLE_HARD_EXCLUDE_KEYWORDS:
+            if matches_keyword(kw, role_lower) or matches_keyword(kw, role_norm):
+                # Check if this exclusion is balanced by a strong whitelisted keyword
+                # E.g., "Marketing Analytics Intern" contains hard exclude "marketing" and whitelist "analytics"
+                is_balanced = False
+                for wl in matched_whitelist:
+                    if "analytics" in wl or "data" in wl or "science" in wl:
+                        is_balanced = True
+                if not is_balanced:
+                    matched_hard_exclude.append(kw)
 
-    for kw in ROLE_SOFT_EXCLUDE_KEYWORDS:
-        if matches_keyword(kw, role_lower) or matches_keyword(kw, role_norm):
-            is_balanced = False
-            for wl in matched_whitelist:
-                if "analytics" in wl or "data" in wl or "science" in wl:
-                    is_balanced = True
-            if not is_balanced:
-                matched_soft_exclude.append(kw)
+        for kw in ROLE_SOFT_EXCLUDE_KEYWORDS:
+            if matches_keyword(kw, role_lower) or matches_keyword(kw, role_norm):
+                is_balanced = False
+                for wl in matched_whitelist:
+                    if "analytics" in wl or "data" in wl or "science" in wl:
+                        is_balanced = True
+                if not is_balanced:
+                    matched_soft_exclude.append(kw)
 
     # 4. Classify confidence tier
     has_whitelist = len(matched_whitelist) > 0
@@ -437,14 +503,39 @@ def calculate_relevance_score(title: str, skills: str, description: str) -> int:
     skills_lower = (skills or "").lower()
     desc_lower = (description or "").lower()
     
+    # Check override keywords first to bypass hard exclusions
+    override_keywords = [
+        "mis analyst", "data analyst", "ai engineer", "ml engineer", "machine learning",
+        "business intelligence", "data science", "data scientist", "data engineering",
+        "data engineer", "artificial intelligence", "ai research", "quantitative research",
+        "research analyst"
+    ]
+    has_override = False
+    norm_title = re.sub(r'[-/_+:,()\[\]\s]+', ' ', title_lower)
+    norm_title = ' '.join(norm_title.split())
+    for kw in override_keywords:
+        if len(kw) <= 3 and kw.isalnum():
+            pattern = rf"\b{re.escape(kw)}\b"
+            if re.search(pattern, title_lower) or re.search(pattern, norm_title):
+                has_override = True
+                break
+        else:
+            if kw in title_lower or kw in norm_title:
+                has_override = True
+                break
+            if fuzz.partial_ratio(kw, title_lower) >= 90 or fuzz.partial_ratio(kw, norm_title) >= 90:
+                has_override = True
+                break
+
     # 1. Hard Excludes Check (Title-based)
     # If title contains any of the hard exclusions, relevance is 0
-    from python_scraper.config import ROLE_HARD_EXCLUDE_KEYWORDS
-    for kw in ROLE_HARD_EXCLUDE_KEYWORDS:
-        # Use word boundary matching
-        pattern = rf"\b{re.escape(kw)}\b"
-        if re.search(pattern, title_lower):
-            return 0
+    if not has_override:
+        from python_scraper.config import ROLE_HARD_EXCLUDE_KEYWORDS
+        for kw in ROLE_HARD_EXCLUDE_KEYWORDS:
+            # Use word boundary matching
+            pattern = rf"\b{re.escape(kw)}\b"
+            if re.search(pattern, title_lower):
+                return 0
             
     # 2. Positive Keyword Matching
     # Title Score (Max 60)

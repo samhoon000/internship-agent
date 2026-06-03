@@ -46,7 +46,10 @@ ROLE_WHITELIST_KEYWORDS = [
     "annotation", "ai benchmarking", "llm evaluation", "synthetic data", "data labeling",
     # Tools / General
     "sql", "python", "pandas", "excel", "tableau", "power bi", "statistics", "visualization",
-    "spark", "bigquery"
+    "spark", "bigquery",
+    # AI / ML / Startup Roles (YC Parity Whitelist)
+    "ai engineer", "ml engineer", "founding engineer", "founding ai engineer", "product engineer", 
+    "software engineer", "founding software engineer", "research engineer"
 ]
 
 ROLE_CONTEXT_KEYWORDS = [
@@ -56,16 +59,17 @@ ROLE_CONTEXT_KEYWORDS = [
 
 ROLE_HARD_EXCLUDE_KEYWORDS = [
     "marketing", "seo", "sales", "hr", "customer support", "content writing",
-    "social media", "recruiting", "talent acquisition", "telecalling",
-    "telecaller", "bda", "bde", "receptionist", "graphic design",
-    "human resources", "educational consultant", "copywriter", "interior designer",
-    "electronics engineer", "recruiter", "designer", "consultant"
+    "social media", "telecalling", "telecaller", "human resources"
 ]
 
 ROLE_SOFT_EXCLUDE_KEYWORDS = [
     "software developer", "software engineer", "web development", "wordpress", "flutter",
     "java developer", "android", "ios", "ui ux", "campus ambassador",
-    "business development", "react", "node", "frontend", "backend", "full stack"
+    "business development", "react", "node", "frontend", "backend", "full stack",
+    # Previous hard exclusions demoted to soft exclusions
+    "recruiting", "talent acquisition", "bda", "bde", "receptionist", "graphic design",
+    "educational consultant", "copywriter", "interior designer", "electronics engineer",
+    "recruiter", "designer", "consultant"
 ]
 
 STRONG_TECH_KEYWORDS = ROLE_WHITELIST_KEYWORDS
@@ -108,11 +112,11 @@ SUSPICIOUS_COMPANY_PATTERNS = [
 # ── Legitimacy Scoring Settings ───────────────────────────────────
 # Minimum legitimacy score required to INSERT into SQL.
 # Internships scoring below this threshold are AUTO-REJECTED.
-MIN_LEGITIMACY_TO_KEEP = 60
+MIN_LEGITIMACY_TO_KEEP = 45
 
 # Score buckets:
-# 90-100 = Excellent
-# 75-89  = High Confidence
-# 60-74  = Good
-# 40-59  = Risky (auto-rejected before SQL insert)
-# 0-39   = Reject (auto-rejected before SQL insert)
+# 80+ HIGH_CONFIDENCE
+# 60-79 MEDIUM_CONFIDENCE
+# 45-59 LOW_CONFIDENCE
+# <45 REJECT
+

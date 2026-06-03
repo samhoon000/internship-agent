@@ -181,6 +181,9 @@ def save_internships(internship_dicts, stats_dict=None):
 
         to_insert = []
         
+        from python_scraper.utils.validators import log_rejection
+        from python_scraper.scoring.legitimacy import get_legitimacy_bucket
+
         for item in internship_dicts:
             apply_link = item.get('apply_link')
             company_name = item.get('company_name', '').strip()
@@ -196,13 +199,24 @@ def save_internships(internship_dicts, stats_dict=None):
             if not apply_link or not company_name or not role:
                 logger.warning(f"[SQL Insert Safety] Rejected malformed internship: {item}")
                 rejected_malformed += 1
+                reasons = []
+                if not apply_link: reasons.append("Missing Critical Fields (apply_link)")
+                if not company_name: reasons.append("Missing Critical Fields (company_name)")
+                if not role: reasons.append("Missing Critical Fields (role)")
+                log_rejection(company_name or "Unknown Company", role or "Unknown Role", 0, reasons)
                 continue
 
             # Check legitimacy score (safety gate)
             if score < MIN_LEGITIMACY_TO_KEEP:
                 logger.warning(f"[SQL Insert Safety] Rejected low confidence internship ({company_name} - {role}): score {score} < {MIN_LEGITIMACY_TO_KEEP}")
                 rejected_low_confidence += 1
+                log_rejection(company_name, role, score, [f"Legitimacy Score Below Threshold ({score} < {MIN_LEGITIMACY_TO_KEEP})"])
                 continue
+
+            # Map the confidence to 4-tier class
+            confidence_tier = item.get('confidence')
+            if not confidence_tier or confidence_tier in ['HIGH', 'MEDIUM', 'LOW', 'REJECT', 'NEEDS_RESCUE']:
+                confidence_tier = get_legitimacy_bucket(score)
 
             normalized_input_link = normalize_url(apply_link)
             ckey = get_canonical_key(company_name, role)
@@ -263,8 +277,8 @@ def save_internships(internship_dicts, stats_dict=None):
                 if score > existing_record.legitimacy_score:
                     existing_record.legitimacy_score = score
                     changed = True
-                if item.get('confidence') and existing_record.confidence != item.get('confidence'):
-                    existing_record.confidence = item.get('confidence')
+                if confidence_tier and existing_record.confidence != confidence_tier:
+                    existing_record.confidence = confidence_tier
                     changed = True
                 if item.get('description') and existing_record.description != item.get('description'):
                     existing_record.description = item.get('description')
@@ -300,7 +314,7 @@ def save_internships(internship_dicts, stats_dict=None):
                 "source": source,
                 "legitimacy_score": score,
                 "freshness_score": freshness,
-                "confidence": item.get('confidence', 'HIGH'),
+                "confidence": confidence_tier or 'HIGH_CONFIDENCE',
                 "description": item.get('description'),
                 "relevance_score": item.get('relevance_score', 0),
                 "posted_at": posted_at,

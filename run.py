@@ -167,6 +167,8 @@ async def validate_new_items_liveness(items) -> list[dict]:
             url_domain_cache[domain] = is_live
             if not is_live:
                 logger.warning(f"[Liveness Gate] Rejecting new link for {item.get('company_name')} - {item.get('role')}: {reason}")
+                from python_scraper.utils.validators import log_rejection
+                log_rejection(item.get('company_name'), item.get('role'), item.get('legitimacy_score', 0), [f"Dead Link: {reason}"])
                 return None
             
             # Extract and store clean description
@@ -187,11 +189,13 @@ async def validate_new_items_liveness(items) -> list[dict]:
             # Reject if below relevance threshold (40)
             if relevance < 40:
                 logger.warning(f"[Relevance Gate] Rejecting role: '{item.get('role')}' at '{item.get('company_name')}' (Relevance score {relevance} < 40)")
+                from python_scraper.utils.validators import log_rejection
+                log_rejection(item.get('company_name'), item.get('role'), item.get('legitimacy_score', 0), [f"Low Relevance Score ({relevance} < 40)"])
                 return None
             
             # If the item needs description-based rescue, promote it
             if confidence == "NEEDS_RESCUE":
-                item['confidence'] = 'MEDIUM'
+                item['confidence'] = 'MEDIUM_CONFIDENCE'
                 item['rescued'] = True
                 # Ensure legitimacy score is at least the keep threshold
                 from python_scraper.config import MIN_LEGITIMACY_TO_KEEP
@@ -320,8 +324,8 @@ async def main():
     indeed_cnt = next((s.scraped_count for s in scrapers if s.source_name == "Indeed India"), 0)
     
     # Calculate detailed quality checks metrics
-    passed_direct_role = sum(1 for item in validated_items if item.get('confidence') == 'HIGH')
-    passed_fuzzy = sum(1 for item in validated_items if item.get('confidence') == 'MEDIUM' and not item.get('rescued'))
+    passed_direct_role = sum(1 for item in validated_items if item.get('confidence') == 'HIGH_CONFIDENCE')
+    passed_fuzzy = sum(1 for item in validated_items if item.get('confidence') == 'MEDIUM_CONFIDENCE' and not item.get('rescued'))
     passed_rescue = sum(1 for item in validated_items if item.get('rescued') == True)
     
     rejected_unpaid = sum(s.unpaid_or_cert for s in scrapers)
@@ -330,6 +334,14 @@ async def main():
     
     # Calculate yield/collection improvement
     yield_rate = int((added / total_raw_scraped) * 100) if total_raw_scraped > 0 else 0
+
+    from python_scraper.utils.validators import REJECTION_REASONS_COUNTER
+    rejections_summary = "\nTop Rejection Reasons:\n"
+    if REJECTION_REASONS_COUNTER:
+        for reason, count in REJECTION_REASONS_COUNTER.most_common(5):
+            rejections_summary += f"  - {reason}: {count}\n"
+    else:
+        rejections_summary += "  - No rejections logged during this run.\n"
 
     # Print and log the professional SCRAPER RUN SUMMARY
     summary_report = f"""
@@ -353,7 +365,7 @@ Collection accuracy:
 
 Runtime: {runtime_str}
 Speed improvement: {speed_improvement_str}
-=================================
+{rejections_summary}=================================
 """
     print(summary_report)
     logger.info(summary_report)
