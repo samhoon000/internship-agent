@@ -121,6 +121,11 @@ async def run_agent_cycle():
     total_scraped = ishala_raw + wellfound_raw + indeed_raw + yc_raw
     total_accepted = ishala_accepted + wellfound_accepted + indeed_accepted + yc_accepted
 
+    high_count = sum(1 for item in validated_items if item.get('confidence') == 'HIGH_CONFIDENCE')
+    medium_count = sum(1 for item in validated_items if item.get('confidence') == 'MEDIUM_CONFIDENCE')
+    low_count = sum(1 for item in validated_items if item.get('confidence') == 'LOW_CONFIDENCE')
+    reject_count = total_scraped - total_accepted
+
     from python_scraper.utils.validators import REJECTION_REASONS_COUNTER
     rejections_summary = "\nTop Rejection Reasons:\n"
     if REJECTION_REASONS_COUNTER:
@@ -155,6 +160,12 @@ Total Scraped: {total_scraped}
 Total Accepted: {total_accepted}
 Total Inserted: {added}
 Runtime: {runtime_str}
+
+Confidence Classification:
+- HIGH_CONFIDENCE count: {high_count}
+- MEDIUM_CONFIDENCE count: {medium_count}
+- LOW_CONFIDENCE count: {low_count}
+- REJECT count: {reject_count}
 {rejections_summary}"""
     logger.info(summary_report)
     print(summary_report)

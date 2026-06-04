@@ -128,7 +128,7 @@ router.get('/internships', async (req, res) => {
       stipendMin = '0',
       stipendMax = '',
       source = '',
-      legitimacyMin = '60',
+      legitimacyMin = '45',
       sort = 'newest',
       datePosted = '',
       confidence = '',
@@ -234,7 +234,7 @@ router.get('/internships', async (req, res) => {
     }
 
     // Min legitimacy filter
-    const minLegit = parseInt(legitimacyMin, 10) || 60;
+    const minLegit = parseInt(legitimacyMin, 10) || 45;
     data = data.filter(row => (row.legitimacy_score || 0) >= minLegit);
 
     // Date Posted filter

@@ -21,10 +21,12 @@ class Internship(Base):
     skills = Column(String(500), nullable=True)  # Stored as comma-separated text
     source = Column(String(100), nullable=False, index=True)
     legitimacy_score = Column(Integer, default=50, nullable=False, index=True)
+    confidence_score = Column(Integer, default=50, nullable=False, index=True)
     stipend_numeric = Column(Integer, default=0, nullable=False, index=True)
     posted_at = Column(DateTime, nullable=True, index=True)
     freshness_score = Column(Integer, default=0, nullable=False, index=True)
     confidence = Column(String(50), default="HIGH", nullable=False, index=True)
+    confidence_tier = Column(String(50), default="HIGH_CONFIDENCE", nullable=False, index=True)
     description = Column(String(5000), nullable=True)  # Stored text description
     relevance_score = Column(Integer, default=0, nullable=False, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
@@ -43,11 +45,13 @@ class Internship(Base):
             "apply_link": self.apply_link,
             "source": self.source,
             "legitimacy_score": self.legitimacy_score,
+            "confidence_score": self.confidence_score,
             "stipend_numeric": self.stipend_numeric,
             "created_at": self.created_at.strftime("%Y-%m-%d %H:%M:%S") if self.created_at else None,
             "posted_at": self.posted_at.strftime("%Y-%m-%d %H:%M:%S") if self.posted_at else None,
             "freshness_score": self.freshness_score,
             "confidence": self.confidence,
+            "confidence_tier": self.confidence_tier,
             "description": self.description,
             "relevance_score": self.relevance_score
         }

@@ -63,6 +63,28 @@ const pool = mysql.createPool({
       console.log('[Migration] "confidence" column is already present.');
     }
 
+    // Check if confidence_score column exists
+    const [confScoreCols] = await connection.query('SHOW COLUMNS FROM internships LIKE "confidence_score"');
+    if (confScoreCols.length === 0) {
+      console.log('[Migration] Adding "confidence_score" column to "internships" table...');
+      await connection.query('ALTER TABLE internships ADD COLUMN confidence_score INT DEFAULT 0 NOT NULL');
+      await connection.query('UPDATE internships SET confidence_score = legitimacy_score');
+      console.log('[Migration] Column "confidence_score" added successfully.');
+    } else {
+      console.log('[Migration] "confidence_score" column is already present.');
+    }
+
+    // Check if confidence_tier column exists
+    const [confTierCols] = await connection.query('SHOW COLUMNS FROM internships LIKE "confidence_tier"');
+    if (confTierCols.length === 0) {
+      console.log('[Migration] Adding "confidence_tier" column to "internships" table...');
+      await connection.query('ALTER TABLE internships ADD COLUMN confidence_tier VARCHAR(50) DEFAULT "HIGH_CONFIDENCE" NOT NULL');
+      await connection.query('UPDATE internships SET confidence_tier = confidence');
+      console.log('[Migration] Column "confidence_tier" added successfully.');
+    } else {
+      console.log('[Migration] "confidence_tier" column is already present.');
+    }
+
     // Check if description column exists
     const [descCols] = await connection.query('SHOW COLUMNS FROM internships LIKE "description"');
     if (descCols.length === 0) {
@@ -83,6 +105,18 @@ const pool = mysql.createPool({
       console.log('[Migration] "relevance_score" column is already present.');
     }
 
+    // Align all legitimacy/confidence scores and tiers to the new 4-tier model
+    console.log('[Migration] Aligning confidence scores and tiers to 4-tier model...');
+    await connection.query('UPDATE internships SET confidence_score = legitimacy_score');
+    await connection.query('UPDATE internships SET confidence = "HIGH_CONFIDENCE", confidence_tier = "HIGH_CONFIDENCE" WHERE legitimacy_score >= 80');
+    await connection.query('UPDATE internships SET confidence = "MEDIUM_CONFIDENCE", confidence_tier = "MEDIUM_CONFIDENCE" WHERE legitimacy_score >= 60 AND legitimacy_score < 80');
+    await connection.query('UPDATE internships SET confidence = "LOW_CONFIDENCE", confidence_tier = "LOW_CONFIDENCE" WHERE legitimacy_score >= 45 AND legitimacy_score < 60');
+    const [deletedResult] = await connection.query('DELETE FROM internships WHERE legitimacy_score < 45');
+    if (deletedResult && deletedResult.affectedRows > 0) {
+      console.log(`[Migration] Purged ${deletedResult.affectedRows} rows with legitimacy score < 45.`);
+    }
+    console.log('[Migration] Confidence alignment complete.');
+
     // Run relevance migration check/purge on startup
     console.log('[Migration] Running relevance score calculation on existing listings...');
     const [rows] = await connection.query('SELECT apply_link, role, skills, description FROM internships');
@@ -94,18 +128,49 @@ const pool = mysql.createPool({
       const descLower = (description || '').toLowerCase();
       
       const hardExcludes = [
-        "marketing", "seo", "wordpress", "react", "node", "frontend", "backend",
-        "full stack", "sales", "hr", "customer support", "content writing",
-        "social media", "recruiting", "talent acquisition", "telecalling",
-        "telecaller", "bda", "bde", "receptionist", "graphic design",
-        "human resources", "educational consultant", "copywriter", "interior designer",
-        "electronics engineer", "recruiter", "designer", "consultant"
+        "sales", "marketing", "hr", "human resources", "seo", "telecalling",
+        "telecaller", "customer support", "social media", "content writing"
+      ];
+
+      const overrideKeywords = [
+        "mis analyst", "data analyst", "ai engineer", "ml engineer", "machine learning",
+        "business intelligence", "data science", "data scientist", "data engineering",
+        "data engineer", "artificial intelligence", "ai research", "quantitative research",
+        "research analyst", "founding engineer", "founding ai engineer", "product engineer",
+        "software engineer", "founding software engineer", "research engineer"
       ];
       
-      for (const kw of hardExcludes) {
-        const regex = new RegExp(`\\b${kw.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`, 'i');
-        if (regex.test(roleLower)) {
-          return 0;
+      let hasOverride = false;
+      const titleNorm = roleLower.replace(/[-/_+:,()\[\]\s]+/g, ' ').trim();
+      for (const kw of overrideKeywords) {
+        if (kw.length <= 3) {
+          const regex = new RegExp(`\\b${kw}\\b`, 'i');
+          if (regex.test(roleLower) || regex.test(titleNorm)) {
+            hasOverride = true;
+            break;
+          }
+        } else {
+          if (roleLower.includes(kw) || titleNorm.includes(kw)) {
+            hasOverride = true;
+            break;
+          }
+          if (kw.includes(' ')) {
+            const regexPattern = kw.replace(/\s+/g, '.*');
+            const regex = new RegExp(regexPattern, 'i');
+            if (regex.test(roleLower) || regex.test(titleNorm)) {
+              hasOverride = true;
+              break;
+            }
+          }
+        }
+      }
+
+      if (!hasOverride) {
+        for (const kw of hardExcludes) {
+          const regex = new RegExp(`\\b${kw.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`, 'i');
+          if (regex.test(roleLower)) {
+            return 0;
+          }
         }
       }
       
@@ -115,13 +180,15 @@ const pool = mysql.createPool({
       const engineerKeywords = ["data engineer", "etl", "sql developer", "database"];
       const coreTools = ["data", "analyst", "python", "sql", "excel", "tableau", "power bi"];
       
-      if (analystKeywords.some(kw => roleLower.includes(kw))) {
+      if (hasOverride) {
         titleScore = 60;
-      } else if (scienceKeywords.some(kw => roleLower.includes(kw))) {
+      } else if (analystKeywords.some(kw => kw.length <= 3 ? new RegExp(`\\b${kw}\\b`, 'i').test(roleLower) : roleLower.includes(kw))) {
         titleScore = 60;
-      } else if (engineerKeywords.some(kw => roleLower.includes(kw))) {
+      } else if (scienceKeywords.some(kw => kw.length <= 3 ? new RegExp(`\\b${kw}\\b`, 'i').test(roleLower) : roleLower.includes(kw))) {
+        titleScore = 60;
+      } else if (engineerKeywords.some(kw => kw.length <= 3 ? new RegExp(`\\b${kw}\\b`, 'i').test(roleLower) : roleLower.includes(kw))) {
         titleScore = 50;
-      } else if (coreTools.some(kw => roleLower.includes(kw))) {
+      } else if (coreTools.some(kw => kw.length <= 3 ? new RegExp(`\\b${kw}\\b`, 'i').test(roleLower) : roleLower.includes(kw))) {
         titleScore = 40;
       }
       

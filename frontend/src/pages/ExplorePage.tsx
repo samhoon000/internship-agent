@@ -46,7 +46,7 @@ export default function ExplorePage() {
   const selectedSources = searchParams.get('source') ? searchParams.get('source')!.split(',') : [];
   const stipendMin = searchParams.get('stipendMin') || '0';
   const stipendMax = searchParams.get('stipendMax') || '';
-  const legitimacyMin = searchParams.get('legitimacyMin') || '60';
+  const legitimacyMin = searchParams.get('legitimacyMin') || '45';
   const datePosted = searchParams.get('datePosted') || '';
   const sort = searchParams.get('sort') || 'newest';
   const page = searchParams.get('page') || '1';
@@ -251,7 +251,7 @@ export default function ExplorePage() {
     setLocalSearch('');
     setLocalStipendMin('0');
     setLocalStipendMax('60000');
-    setLocalLegitimacyMin('60');
+    setLocalLegitimacyMin('45');
     setResumeText('');
     setResumeSkillsMatched([]);
   };
@@ -272,7 +272,7 @@ export default function ExplorePage() {
       setLocalStipendMax('60000');
       updates['stipendMax'] = null;
     } else if (key === 'legitimacyMin') {
-      setLocalLegitimacyMin('60');
+      setLocalLegitimacyMin('45');
       updates['legitimacyMin'] = null;
     } else if (key === 'datePosted') {
       updates['datePosted'] = null;
@@ -295,7 +295,7 @@ export default function ExplorePage() {
     selectedSources.length > 0 || 
     stipendMin !== '0' || 
     stipendMax || 
-    legitimacyMin !== '60' || 
+    legitimacyMin !== '45' || 
     datePosted;
 
   return (
@@ -431,7 +431,7 @@ export default function ExplorePage() {
             </span>
           )}
 
-          {legitimacyMin !== '60' && (
+          {legitimacyMin !== '45' && (
             <span className="inline-flex items-center gap-1 bg-white border border-slate-200 text-slate-700 px-2 py-0.5 rounded-md">
               Legitimacy Score &ge; {legitimacyMin}%
               <button onClick={() => removeFilterChip('legitimacyMin')} className="text-slate-400 hover:text-slate-600 cursor-pointer">
@@ -681,13 +681,13 @@ export default function ExplorePage() {
             <input
               id="legitimacy-min-slider"
               type="range"
-              min="60"
+              min="45"
               max="100"
               step="5"
               value={localLegitimacyMin}
               onChange={(e) => setLocalLegitimacyMin(e.target.value)}
-              onMouseUp={() => updateQueryParams({ legitimacyMin: localLegitimacyMin === '60' ? null : localLegitimacyMin, page: '1' })}
-              onTouchEnd={() => updateQueryParams({ legitimacyMin: localLegitimacyMin === '60' ? null : localLegitimacyMin, page: '1' })}
+              onMouseUp={() => updateQueryParams({ legitimacyMin: localLegitimacyMin === '45' ? null : localLegitimacyMin, page: '1' })}
+              onTouchEnd={() => updateQueryParams({ legitimacyMin: localLegitimacyMin === '45' ? null : localLegitimacyMin, page: '1' })}
               className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-primary-600"
             />
           </div>
@@ -1115,11 +1115,11 @@ export default function ExplorePage() {
               <input
                 id="mobile-legitimacy-min"
                 type="range"
-                min="60"
+                min="45"
                 max="100"
                 step="5"
                 value={legitimacyMin}
-                onChange={(e) => updateQueryParams({ legitimacyMin: e.target.value === '60' ? null : e.target.value, page: '1' })}
+                onChange={(e) => updateQueryParams({ legitimacyMin: e.target.value === '45' ? null : e.target.value, page: '1' })}
                 className="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-primary-600"
               />
             </div>

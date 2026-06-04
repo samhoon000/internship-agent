@@ -84,6 +84,18 @@ def init_db():
                     conn.execute(text("ALTER TABLE internships ADD COLUMN confidence VARCHAR(50) DEFAULT 'HIGH' NOT NULL"))
                     logger.info("[Migration] Column 'confidence' added successfully.")
                 
+                if "confidence_score" not in existing_cols:
+                    logger.info("[Migration] Adding 'confidence_score' column to 'internships' table...")
+                    conn.execute(text("ALTER TABLE internships ADD COLUMN confidence_score INT DEFAULT 0 NOT NULL"))
+                    conn.execute(text("UPDATE internships SET confidence_score = legitimacy_score"))
+                    logger.info("[Migration] Column 'confidence_score' added successfully.")
+                
+                if "confidence_tier" not in existing_cols:
+                    logger.info("[Migration] Adding 'confidence_tier' column to 'internships' table...")
+                    conn.execute(text("ALTER TABLE internships ADD COLUMN confidence_tier VARCHAR(50) DEFAULT 'HIGH_CONFIDENCE' NOT NULL"))
+                    conn.execute(text("UPDATE internships SET confidence_tier = confidence"))
+                    logger.info("[Migration] Column 'confidence_tier' added successfully.")
+
                 if "description" not in existing_cols:
                     logger.info("[Migration] Adding 'description' column to 'internships' table...")
                     conn.execute(text("ALTER TABLE internships ADD COLUMN description TEXT DEFAULT NULL"))
@@ -276,9 +288,11 @@ def save_internships(internship_dicts, stats_dict=None):
                     changed = True
                 if score > existing_record.legitimacy_score:
                     existing_record.legitimacy_score = score
+                    existing_record.confidence_score = score
                     changed = True
                 if confidence_tier and existing_record.confidence != confidence_tier:
                     existing_record.confidence = confidence_tier
+                    existing_record.confidence_tier = confidence_tier
                     changed = True
                 if item.get('description') and existing_record.description != item.get('description'):
                     existing_record.description = item.get('description')
@@ -313,8 +327,10 @@ def save_internships(internship_dicts, stats_dict=None):
                 "skills": item.get('skills'),
                 "source": source,
                 "legitimacy_score": score,
+                "confidence_score": score,
                 "freshness_score": freshness,
                 "confidence": confidence_tier or 'HIGH_CONFIDENCE',
+                "confidence_tier": confidence_tier or 'HIGH_CONFIDENCE',
                 "description": item.get('description'),
                 "relevance_score": item.get('relevance_score', 0),
                 "posted_at": posted_at,

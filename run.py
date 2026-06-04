@@ -335,6 +335,11 @@ async def main():
     # Calculate yield/collection improvement
     yield_rate = int((added / total_raw_scraped) * 100) if total_raw_scraped > 0 else 0
 
+    high_count = sum(1 for item in validated_items if item.get('confidence') == 'HIGH_CONFIDENCE')
+    medium_count = sum(1 for item in validated_items if item.get('confidence') == 'MEDIUM_CONFIDENCE')
+    low_count = sum(1 for item in validated_items if item.get('confidence') == 'LOW_CONFIDENCE')
+    reject_count = total_raw_scraped - len(validated_items)
+
     from python_scraper.utils.validators import REJECTION_REASONS_COUNTER
     rejections_summary = "\nTop Rejection Reasons:\n"
     if REJECTION_REASONS_COUNTER:
@@ -362,6 +367,12 @@ Final inserted: {added}
 
 Collection accuracy:
 +{yield_rate}%
+
+Confidence Classification:
+- HIGH_CONFIDENCE count: {high_count}
+- MEDIUM_CONFIDENCE count: {medium_count}
+- LOW_CONFIDENCE count: {low_count}
+- REJECT count: {reject_count}
 
 Runtime: {runtime_str}
 Speed improvement: {speed_improvement_str}

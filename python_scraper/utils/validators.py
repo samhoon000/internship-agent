@@ -273,6 +273,12 @@ def validate_role_quality(role: str, item: dict = None) -> tuple[bool, str]:
         if keyword in text:
             return True
             
+        # Dynamic regex matching for space-separated compound terms
+        if ' ' in keyword:
+            pattern = re.sub(r'\s+', '.*', re.escape(keyword))
+            if re.search(pattern, text):
+                return True
+
         # Fuzzy match using partial ratio (helps match data-analysis to data analysis, etc.)
         if fuzz.partial_ratio(keyword, text) >= 90:
             return True
@@ -291,7 +297,8 @@ def validate_role_quality(role: str, item: dict = None) -> tuple[bool, str]:
         "mis analyst", "data analyst", "ai engineer", "ml engineer", "machine learning",
         "business intelligence", "data science", "data scientist", "data engineering",
         "data engineer", "artificial intelligence", "ai research", "quantitative research",
-        "research analyst"
+        "research analyst", "founding engineer", "founding ai engineer", "product engineer",
+        "software engineer", "founding software engineer", "research engineer"
     ]
     has_override = False
     for kw in override_keywords:
@@ -508,7 +515,8 @@ def calculate_relevance_score(title: str, skills: str, description: str) -> int:
         "mis analyst", "data analyst", "ai engineer", "ml engineer", "machine learning",
         "business intelligence", "data science", "data scientist", "data engineering",
         "data engineer", "artificial intelligence", "ai research", "quantitative research",
-        "research analyst"
+        "research analyst", "founding engineer", "founding ai engineer", "product engineer",
+        "software engineer", "founding software engineer", "research engineer"
     ]
     has_override = False
     norm_title = re.sub(r'[-/_+:,()\[\]\s]+', ' ', title_lower)
@@ -523,6 +531,11 @@ def calculate_relevance_score(title: str, skills: str, description: str) -> int:
             if kw in title_lower or kw in norm_title:
                 has_override = True
                 break
+            if ' ' in kw:
+                pattern = re.sub(r'\s+', '.*', re.escape(kw))
+                if re.search(pattern, title_lower) or re.search(pattern, norm_title):
+                    has_override = True
+                    break
             if fuzz.partial_ratio(kw, title_lower) >= 90 or fuzz.partial_ratio(kw, norm_title) >= 90:
                 has_override = True
                 break
@@ -547,7 +560,9 @@ def calculate_relevance_score(title: str, skills: str, description: str) -> int:
     engineer_keywords = ["data engineer", "etl", "sql developer", "database"]
     core_tools = ["data", "analyst", "python", "sql", "excel", "tableau", "power bi"]
     
-    if any(kw in title_lower for kw in analyst_keywords):
+    if has_override:
+        title_score = 60
+    elif any(kw in title_lower for kw in analyst_keywords):
         title_score = 60
     elif any(kw in title_lower for kw in science_keywords):
         title_score = 60
