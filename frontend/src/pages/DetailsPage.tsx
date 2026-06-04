@@ -5,12 +5,14 @@ import { ArrowLeft, Bookmark, ExternalLink, ShieldCheck, Share2, Building } from
 import { fetchInternshipDetails } from '../api';
 import type { Internship } from '../api';
 import InternshipCard from '../components/InternshipCard';
+import { formatStipend } from '../utils/formatters';
 
 export default function DetailsPage() {
   const { applyLink } = useParams<{ applyLink: string }>();
   const navigate = useNavigate();
   const [isSaved, setIsSaved] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
+  const [showTooltip, setShowTooltip] = useState(false);
 
   // Fetch internship details by decoded applyLink
   const { data, isLoading, isError } = useQuery({
@@ -115,6 +117,8 @@ export default function DetailsPage() {
       : 'CO';
   };
 
+  const stipendInfo = formatStipend(internship.stipend);
+
   return (
     <div className="space-y-6 max-w-5xl mx-auto pb-16">
       
@@ -122,7 +126,8 @@ export default function DetailsPage() {
       <div className="flex items-center justify-between">
         <button
           onClick={() => navigate('/explore')}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-slate-200 rounded-lg bg-white text-slate-650 text-xs font-semibold hover:text-slate-800 hover:bg-slate-50 transition-colors cursor-pointer"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-slate-200 rounded-lg bg-white text-slate-650 text-xs font-semibold hover:text-slate-800 hover:bg-slate-50 transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-500"
+          aria-label="Back to explore page"
         >
           <ArrowLeft className="w-3.5 h-3.5" />
           <span>Back to aggregator</span>
@@ -131,8 +136,9 @@ export default function DetailsPage() {
         <div className="flex items-center gap-2">
           <button
             onClick={copyToClipboard}
-            className="inline-flex items-center justify-center p-2 border border-slate-200 bg-white hover:bg-slate-50 rounded-lg text-slate-500 hover:text-slate-800 transition-colors cursor-pointer"
+            className="inline-flex items-center justify-center p-2 border border-slate-200 bg-white hover:bg-slate-50 rounded-lg text-slate-500 hover:text-slate-800 transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-500"
             title="Share Internship"
+            aria-label="Copy link to clipboard"
           >
             <Share2 className="w-3.5 h-3.5" />
           </button>
@@ -173,11 +179,12 @@ export default function DetailsPage() {
               {/* Save trigger */}
               <button
                 onClick={toggleSave}
-                className={`flex items-center gap-1.5 px-3.5 py-1.5 border rounded-lg text-xs font-semibold transition-all self-stretch sm:self-auto justify-center cursor-pointer ${
+                className={`flex items-center gap-1.5 px-3.5 py-1.5 border rounded-lg text-xs font-semibold transition-all self-stretch sm:self-auto justify-center cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-500 ${
                   isSaved
                     ? 'bg-primary-50 text-primary-650 border-primary-200 shadow-sm'
                     : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
                 }`}
+                aria-label={isSaved ? "Remove from bookmarked internships" : "Bookmark this internship"}
               >
                 <Bookmark className={`w-3.5 h-3.5 ${isSaved ? 'fill-current' : ''}`} />
                 <span>{isSaved ? 'Bookmarked' : 'Save opportunity'}</span>
@@ -188,26 +195,34 @@ export default function DetailsPage() {
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <div className="bg-slate-50 border border-slate-100 rounded-lg p-3 text-center">
                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Stipend</p>
-                <p className="text-slate-800 font-bold text-xs truncate">{internship.stipend || 'Unspecified'}</p>
+                <p className="text-slate-800 font-bold text-xs truncate" title={stipendInfo.formatted}>
+                  {stipendInfo.formatted}
+                </p>
               </div>
               <div className="bg-slate-50 border border-slate-100 rounded-lg p-3 text-center">
                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Location</p>
-                <p className="text-slate-800 font-bold text-xs truncate">{internship.location || 'On-site'}</p>
+                <p className="text-slate-800 font-bold text-xs truncate" title={internship.location || 'On-site'}>
+                  {internship.location || 'On-site'}
+                </p>
               </div>
               <div className="bg-slate-50 border border-slate-100 rounded-lg p-3 text-center">
                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Duration</p>
-                <p className="text-slate-800 font-bold text-xs truncate">{internship.duration || 'Not specified'}</p>
+                <p className="text-slate-800 font-bold text-xs truncate" title={internship.duration || 'Not specified'}>
+                  {internship.duration || 'Not specified'}
+                </p>
               </div>
               <div className="bg-slate-50 border border-slate-100 rounded-lg p-3 text-center">
                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Source</p>
-                <p className="text-slate-800 font-bold text-xs truncate">{internship.source}</p>
+                <p className="text-slate-800 font-bold text-xs truncate" title={internship.source}>
+                  {internship.source}
+                </p>
               </div>
             </div>
 
             {/* Badges Flex */}
-            <div className="flex flex-wrap gap-1.5">
+            <div className="flex flex-wrap gap-1.5 items-center">
               {internship.remote === 1 && (
-                <span className="px-2.5 py-1 text-xs font-semibold bg-primary-50 text-primary-750 border border-primary-100 rounded-lg">
+                <span className="px-2.5 py-1 text-xs font-semibold bg-primary-50 text-primary-755 border border-primary-100 rounded-lg">
                   Remote position
                 </span>
               )}
@@ -215,6 +230,49 @@ export default function DetailsPage() {
                 <span className="px-2.5 py-1 text-xs font-semibold bg-emerald-50 text-emerald-755 border border-emerald-100 rounded-lg">
                   Verified compensation
                 </span>
+              )}
+
+              {/* Match Score Tooltip Badge */}
+              {internship.match_score !== undefined && (
+                <div className="relative inline-flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setShowTooltip(!showTooltip);
+                    }}
+                    onMouseEnter={() => setShowTooltip(true)}
+                    onMouseLeave={() => setShowTooltip(false)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        setShowTooltip(!showTooltip);
+                      }
+                    }}
+                    className="px-2.5 py-1 text-xs font-semibold bg-slate-50 text-slate-700 border border-slate-205 rounded-lg flex items-center gap-1 cursor-help hover:bg-slate-100 outline-none focus:ring-2 focus:ring-primary-500"
+                    aria-label="Match score explanation tooltip trigger"
+                    aria-expanded={showTooltip}
+                  >
+                    <span>{internship.match_score}% Match</span>
+                    <span className="text-[8px] opacity-75">ⓘ</span>
+                  </button>
+                  
+                  {showTooltip && (
+                    <div 
+                      role="tooltip"
+                      className="absolute left-0 top-full mt-2 w-64 bg-slate-900 text-white text-[10px] rounded-lg p-3 shadow-xl z-20 leading-relaxed font-normal animate-fade-in"
+                    >
+                      <p className="font-bold text-[11px] mb-1.5 text-primary-400">Match score calculation factors:</p>
+                      <ul className="space-y-1 list-disc list-inside text-slate-300">
+                        <li><strong className="text-white">Resume skills:</strong> technical keyword overlap</li>
+                        <li><strong className="text-white">Requirements:</strong> role constraints analysis</li>
+                        <li><strong className="text-white">Role relevance:</strong> sector and focus keyword audit</li>
+                        <li><strong className="text-white">Experience alignment:</strong> years and prerequisite match</li>
+                      </ul>
+                      <div className="absolute bottom-full left-4 w-2 h-2 bg-slate-900 transform rotate-45 translate-y-1"></div>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
 
@@ -251,7 +309,7 @@ export default function DetailsPage() {
                     href={internship.apply_link}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-primary-600 hover:text-primary-800 font-bold inline-flex items-center gap-0.5"
+                    className="text-primary-600 hover:text-primary-800 font-bold inline-flex items-center gap-0.5 focus:outline-none focus:ring-1 focus:ring-primary-500 rounded"
                   >
                     Open original listing <ExternalLink className="w-3 h-3" />
                   </a>
@@ -361,7 +419,7 @@ export default function DetailsPage() {
               href={internship.apply_link}
               target="_blank"
               rel="noopener noreferrer"
-              className="w-full inline-flex items-center justify-center gap-1.5 px-5 py-3 bg-primary-600 hover:bg-primary-700 text-white font-bold rounded-lg shadow-sm transition-colors text-xs cursor-pointer"
+              className="w-full inline-flex items-center justify-center gap-1.5 px-5 py-3 bg-primary-600 hover:bg-primary-700 text-white font-bold rounded-lg shadow-sm transition-colors text-xs cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-500"
             >
               <span>Apply now</span>
               <ExternalLink className="w-3.5 h-3.5" />

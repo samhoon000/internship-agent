@@ -1,9 +1,21 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Search, SlidersHorizontal, Shield, RotateCcw, ChevronLeft, ChevronRight, Check, X } from 'lucide-react';
 import { fetchInternships } from '../api';
 import InternshipCard from '../components/InternshipCard';
+
+// Static filter checklists defined outside component to prevent re-creation on every render
+const standardSkills = ['Python', 'SQL', 'Power BI', 'Excel', 'Tableau', 'Machine Learning', 'Statistics', 'Pandas', 'Data Visualization'];
+const locationsList = ['Bangalore', 'Mumbai', 'Delhi', 'Hyderabad', 'Pune', 'Chennai'];
+const sourcesList = ['Internshala', 'LinkedIn', 'Wellfound', 'Indeed', 'Company Website'];
+const durationsList = [
+  { value: '1', label: '1 Month' },
+  { value: '2', label: '2 Months' },
+  { value: '3', label: '3 Months' },
+  { value: '6', label: '6 Months' },
+  { value: '6+', label: '6+ Months' }
+];
 
 function getPaginationPages(currentPage: number, totalPages: number): (number | string)[] {
   const pages: (number | string)[] = [];
@@ -55,10 +67,11 @@ export default function ExplorePage() {
   const [localSearch, setLocalSearch] = useState(search);
   const [showMobileFilters, setShowMobileFilters] = useState(false);
 
-  // Local state for sliders to prevent drag query lag
+  // Local state for stipend text inputs
   const [localStipendMin, setLocalStipendMin] = useState(stipendMin);
-  const [localStipendMax, setLocalStipendMax] = useState(stipendMax || '60000');
+  const [localStipendMax, setLocalStipendMax] = useState(stipendMax);
   const [localLegitimacyMin, setLocalLegitimacyMin] = useState(legitimacyMin);
+  const [stipendError, setStipendError] = useState<string | null>(null);
 
   // Sync local states when query parameters change externally
   useEffect(() => {
@@ -66,7 +79,7 @@ export default function ExplorePage() {
   }, [stipendMin]);
 
   useEffect(() => {
-    setLocalStipendMax(stipendMax || '60000');
+    setLocalStipendMax(stipendMax);
   }, [stipendMax]);
 
   useEffect(() => {
@@ -91,6 +104,69 @@ export default function ExplorePage() {
     return () => clearTimeout(timer);
   }, [localSearch]);
 
+  // Debounce stipend inputs and validate
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      const minNum = parseInt(localStipendMin, 10) || 0;
+      const maxNum = localStipendMax ? parseInt(localStipendMax, 10) : Infinity;
+
+      // Validate inputs are numbers only
+      if (localStipendMin && !/^\d+$/.test(localStipendMin) && localStipendMin !== '0') {
+        setStipendError('Minimum stipend must be a valid number');
+        return;
+      }
+      if (localStipendMax && !/^\d+$/.test(localStipendMax)) {
+        setStipendError('Maximum stipend must be a valid number');
+        return;
+      }
+
+      // Validate range constraint
+      if (minNum > maxNum) {
+        setStipendError('Minimum stipend cannot exceed Maximum stipend');
+        return;
+      }
+
+      setStipendError(null);
+
+      // Check differences before applying updates
+      const currentMin = searchParams.get('stipendMin') || '0';
+      const currentMax = searchParams.get('stipendMax') || '';
+
+      const newMin = minNum === 0 ? null : minNum.toString();
+      const newMax = maxNum === Infinity ? null : maxNum.toString();
+
+      const updates: Record<string, string | null> = {};
+      if (newMin !== (currentMin === '0' ? null : currentMin)) {
+        updates['stipendMin'] = newMin;
+        updates['page'] = '1';
+      }
+      if (newMax !== currentMax) {
+        updates['stipendMax'] = newMax;
+        updates['page'] = '1';
+      }
+
+      if (Object.keys(updates).length > 0) {
+        updateQueryParams(updates);
+      }
+    }, 550);
+
+    return () => clearTimeout(timer);
+  }, [localStipendMin, localStipendMax]);
+
+  const handleMinStipendChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    if (val === '' || /^\d+$/.test(val)) {
+      setLocalStipendMin(val || '0');
+    }
+  };
+
+  const handleMaxStipendChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    if (val === '' || /^\d+$/.test(val)) {
+      setLocalStipendMax(val);
+    }
+  };
+
   // Premium feature: Resume Matching State
   const [resumeText, setResumeText] = useState('');
   const [resumeSkillsMatched, setResumeSkillsMatched] = useState<string[]>([]);
@@ -100,22 +176,6 @@ export default function ExplorePage() {
   const [showAlertModal, setShowAlertModal] = useState(false);
   const [alertEmail, setAlertEmail] = useState('');
   const [alertSuccess, setAlertSuccess] = useState(false);
-
-  // Premium feature: AI Recommendations State
-  const [aiRecommendations, setAiRecommendations] = useState<any[]>([]);
-
-  // Filter checklists
-  const standardSkills = ['Python', 'SQL', 'Power BI', 'Excel', 'Tableau', 'Machine Learning', 'Statistics', 'Pandas', 'Data Visualization'];
-  const locationsList = ['Bangalore', 'Mumbai', 'Delhi', 'Hyderabad', 'Pune', 'Chennai'];
-  const sourcesList = ['Internshala', 'LinkedIn', 'Wellfound', 'Indeed', 'Company Website'];
-  const durationsList = [
-    { value: '1', label: '1 Month' },
-    { value: '2', label: '2 Months' },
-    { value: '3', label: '3 Months' },
-    { value: '6', label: '6 Months' },
-    { value: '6+', label: '6+ Months' }
-  ];
-
 
   const handleResumeMatch = () => {
     if (!resumeText.trim()) return;
@@ -195,28 +255,27 @@ export default function ExplorePage() {
     placeholderData: (prev) => prev
   });
 
-  // AI Recommendations logic: recommend jobs sharing skills with user's bookmarks
-  useEffect(() => {
+  // AI Recommended Listings logic using useMemo for performance
+  const aiRecommendations = useMemo(() => {
     try {
       const saved = JSON.parse(localStorage.getItem('saved_internships') || '[]');
       if (saved.length > 0 && listingsData?.internships) {
-        const savedSkills = saved.flatMap((i: any) => i.skills_list || []).map((s: string) => s.toLowerCase());
-        const savedLinks = saved.map((i: any) => i.apply_link);
+        const savedSkills = new Set(
+          saved.flatMap((i: any) => i.skills_list || []).map((s: string) => s.toLowerCase())
+        );
+        const savedLinks = new Set(saved.map((i: any) => i.apply_link));
         
         // Find listings matching saved skills, excluding already saved
-        const recs = listingsData.internships.filter((item: any) => {
-          if (savedLinks.includes(item.apply_link)) return false;
-          return item.skills_list.some((s: string) => savedSkills.includes(s.toLowerCase()));
+        return listingsData.internships.filter((item: any) => {
+          if (savedLinks.has(item.apply_link)) return false;
+          return item.skills_list.some((s: string) => savedSkills.has(s.toLowerCase()));
         }).slice(0, 3);
-        
-        setAiRecommendations(recs);
-      } else {
-        setAiRecommendations([]);
       }
     } catch (e) {
-      setAiRecommendations([]);
+      console.error('Error computing recommendations:', e);
     }
-  }, [listingsData, showAlertModal]); // update recommendations when page loads/updates
+    return [];
+  }, [listingsData?.internships]);
 
   // Helper to update query parameters in URL
   const updateQueryParams = (updates: Record<string, string | null>) => {
@@ -250,7 +309,7 @@ export default function ExplorePage() {
     setSearchParams(new URLSearchParams());
     setLocalSearch('');
     setLocalStipendMin('0');
-    setLocalStipendMax('60000');
+    setLocalStipendMax('');
     setLocalLegitimacyMin('45');
     setResumeText('');
     setResumeSkillsMatched([]);
@@ -269,7 +328,7 @@ export default function ExplorePage() {
       setLocalStipendMin('0');
       updates['stipendMin'] = null;
     } else if (key === 'stipendMax') {
-      setLocalStipendMax('60000');
+      setLocalStipendMax('');
       updates['stipendMax'] = null;
     } else if (key === 'legitimacyMin') {
       setLocalLegitimacyMin('45');
@@ -303,14 +362,16 @@ export default function ExplorePage() {
       
       {/* Search & Header Section */}
       <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 bg-white border border-slate-200 rounded-xl p-3.5 shadow-sm">
-        <div className="relative flex-1">
-          <Search className="absolute left-3.5 top-3 w-4 h-4 text-slate-400" />
+        <div className="relative flex-1 group">
+          <Search className="absolute left-4 top-3.5 w-4 h-4 text-slate-400 group-focus-within:text-primary-600 transition-colors" aria-hidden="true" />
           <input
             type="text"
+            id="global-search-bar"
+            aria-label="Search internships by role, company, or skills"
             placeholder="Search role, company, or skills..."
             value={localSearch}
             onChange={(e) => setLocalSearch(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-205 rounded-lg outline-none focus:border-primary-400 focus:bg-white text-sm transition-all"
+            className="w-full pl-11 pr-4 py-2.5 bg-white border border-slate-300 rounded-xl outline-none hover:border-slate-450 focus:border-primary-600 focus:ring-4 focus:ring-primary-100/50 text-sm font-medium text-slate-800 placeholder:text-slate-400 transition-all shadow-sm"
           />
         </div>
         
@@ -319,6 +380,7 @@ export default function ExplorePage() {
           <button
             onClick={() => setShowMobileFilters(!showMobileFilters)}
             className="md:hidden flex items-center justify-center gap-1.5 px-4 py-2.5 bg-white border border-slate-200 rounded-lg text-slate-700 font-semibold text-sm hover:bg-slate-50 cursor-pointer"
+            aria-label="Show mobile filters side-drawer"
           >
             <SlidersHorizontal className="w-4 h-4" />
             <span>Filters</span>
@@ -333,7 +395,8 @@ export default function ExplorePage() {
                 page: '1'
               });
             }}
-            className="px-3.5 py-2.5 bg-white border border-slate-205 rounded-lg text-slate-700 font-medium text-sm outline-none cursor-pointer hover:bg-slate-50 transition-colors"
+            aria-label="Sort internships by criteria"
+            className="px-3.5 py-2.5 bg-white border border-slate-205 rounded-lg text-slate-700 font-medium text-sm outline-none cursor-pointer hover:bg-slate-50 transition-colors focus:ring-2 focus:ring-primary-500"
           >
             <option value="newest">Newest First</option>
             <option value="stipend">Highest Stipend</option>
@@ -346,6 +409,7 @@ export default function ExplorePage() {
           {/* Reset Filters */}
           <button
             onClick={resetAllFilters}
+            aria-label="Reset all search queries and active filters"
             className="p-2.5 bg-slate-50 border border-slate-200 hover:bg-slate-100 text-slate-500 rounded-lg hover:text-slate-800 transition-colors cursor-pointer"
             title="Reset All Filters"
           >
@@ -354,15 +418,15 @@ export default function ExplorePage() {
         </div>
       </div>
 
-      {/* Active Filters Bar */}
+      {/* Active Filters Bar - px-5 py-3.5 alignment padding */}
       {hasActiveFilters && (
-        <div className="flex flex-wrap items-center gap-1.5 p-3 bg-slate-50 border border-slate-200/80 rounded-lg text-xs text-slate-660 font-medium">
-          <span className="text-slate-400 font-semibold mr-1">Active filters:</span>
+        <div className="flex flex-wrap items-center gap-1.5 px-5 py-3.5 bg-slate-50 border border-slate-200/80 rounded-xl text-xs text-slate-660 font-medium">
+          <span className="text-slate-450 font-bold mr-1">Active filters:</span>
           
           {search && (
             <span className="inline-flex items-center gap-1 bg-white border border-slate-200 text-slate-700 px-2 py-0.5 rounded-md">
               Search: "{search}"
-              <button onClick={() => removeFilterChip('search')} className="text-slate-400 hover:text-slate-600 cursor-pointer">
+              <button onClick={() => removeFilterChip('search')} className="text-slate-400 hover:text-slate-600 cursor-pointer" aria-label={`Remove search filter "${search}"`}>
                 <X className="w-3 h-3" />
               </button>
             </span>
@@ -371,7 +435,7 @@ export default function ExplorePage() {
           {selectedLocations.map(loc => (
             <span key={loc} className="inline-flex items-center gap-1 bg-white border border-slate-200 text-slate-700 px-2 py-0.5 rounded-md uppercase text-[9px] tracking-wide font-bold">
               {loc}
-              <button onClick={() => removeFilterChip('location', loc)} className="text-slate-400 hover:text-slate-600 cursor-pointer">
+              <button onClick={() => removeFilterChip('location', loc)} className="text-slate-400 hover:text-slate-600 cursor-pointer" aria-label={`Remove location filter "${loc}"`}>
                 <X className="w-3 h-3" />
               </button>
             </span>
@@ -380,7 +444,7 @@ export default function ExplorePage() {
           {remote && (
             <span className="inline-flex items-center gap-1 bg-white border border-slate-200 text-slate-700 px-2 py-0.5 rounded-md capitalize">
               Type: {remote}
-              <button onClick={() => removeFilterChip('remote')} className="text-slate-400 hover:text-slate-600 cursor-pointer">
+              <button onClick={() => removeFilterChip('remote')} className="text-slate-400 hover:text-slate-600 cursor-pointer" aria-label={`Remove remote filter "${remote}"`}>
                 <X className="w-3 h-3" />
               </button>
             </span>
@@ -389,7 +453,7 @@ export default function ExplorePage() {
           {selectedDurations.map(dur => (
             <span key={dur} className="inline-flex items-center gap-1 bg-white border border-slate-200 text-slate-700 px-2 py-0.5 rounded-md">
               {dur === '6+' ? '6+ Months' : `${dur} Month${dur !== '1' ? 's' : ''}`}
-              <button onClick={() => removeFilterChip('duration', dur)} className="text-slate-400 hover:text-slate-600 cursor-pointer">
+              <button onClick={() => removeFilterChip('duration', dur)} className="text-slate-400 hover:text-slate-600 cursor-pointer" aria-label={`Remove duration filter "${dur} months"`}>
                 <X className="w-3 h-3" />
               </button>
             </span>
@@ -398,7 +462,7 @@ export default function ExplorePage() {
           {selectedSkills.map(skill => (
             <span key={skill} className="inline-flex items-center gap-1 bg-white border border-slate-200 text-slate-700 px-2 py-0.5 rounded-md">
               Skill: {skill}
-              <button onClick={() => removeFilterChip('skills', skill)} className="text-slate-400 hover:text-slate-600 cursor-pointer">
+              <button onClick={() => removeFilterChip('skills', skill)} className="text-slate-400 hover:text-slate-600 cursor-pointer" aria-label={`Remove skill filter "${skill}"`}>
                 <X className="w-3 h-3" />
               </button>
             </span>
@@ -407,7 +471,7 @@ export default function ExplorePage() {
           {selectedSources.map(src => (
             <span key={src} className="inline-flex items-center gap-1 bg-white border border-slate-200 text-slate-700 px-2 py-0.5 rounded-md">
               {src}
-              <button onClick={() => removeFilterChip('source', src)} className="text-slate-400 hover:text-slate-600 cursor-pointer">
+              <button onClick={() => removeFilterChip('source', src)} className="text-slate-400 hover:text-slate-600 cursor-pointer" aria-label={`Remove source platform filter "${src}"`}>
                 <X className="w-3 h-3" />
               </button>
             </span>
@@ -416,7 +480,7 @@ export default function ExplorePage() {
           {stipendMin !== '0' && (
             <span className="inline-flex items-center gap-1 bg-white border border-slate-200 text-slate-700 px-2 py-0.5 rounded-md">
               Min Stipend: ₹{parseInt(stipendMin).toLocaleString()}
-              <button onClick={() => removeFilterChip('stipendMin')} className="text-slate-400 hover:text-slate-600 cursor-pointer">
+              <button onClick={() => removeFilterChip('stipendMin')} className="text-slate-400 hover:text-slate-600 cursor-pointer" aria-label="Remove minimum stipend filter">
                 <X className="w-3 h-3" />
               </button>
             </span>
@@ -425,7 +489,7 @@ export default function ExplorePage() {
           {stipendMax && (
             <span className="inline-flex items-center gap-1 bg-white border border-slate-200 text-slate-700 px-2 py-0.5 rounded-md">
               Max Stipend: ₹{parseInt(stipendMax).toLocaleString()}
-              <button onClick={() => removeFilterChip('stipendMax')} className="text-slate-400 hover:text-slate-600 cursor-pointer">
+              <button onClick={() => removeFilterChip('stipendMax')} className="text-slate-400 hover:text-slate-600 cursor-pointer" aria-label="Remove maximum stipend filter">
                 <X className="w-3 h-3" />
               </button>
             </span>
@@ -434,7 +498,7 @@ export default function ExplorePage() {
           {legitimacyMin !== '45' && (
             <span className="inline-flex items-center gap-1 bg-white border border-slate-200 text-slate-700 px-2 py-0.5 rounded-md">
               Legitimacy Score &ge; {legitimacyMin}%
-              <button onClick={() => removeFilterChip('legitimacyMin')} className="text-slate-400 hover:text-slate-600 cursor-pointer">
+              <button onClick={() => removeFilterChip('legitimacyMin')} className="text-slate-400 hover:text-slate-600 cursor-pointer" aria-label="Remove legitimacy threshold filter">
                 <X className="w-3 h-3" />
               </button>
             </span>
@@ -443,13 +507,18 @@ export default function ExplorePage() {
           {datePosted && (
             <span className="inline-flex items-center gap-1 bg-white border border-slate-200 text-slate-700 px-2 py-0.5 rounded-md">
               Posted: {datePosted === 'today' ? 'Today' : datePosted === '3days' ? 'Last 3 Days' : datePosted === '7days' ? 'Last 7 Days' : 'Last 30 Days'}
-              <button onClick={() => removeFilterChip('datePosted')} className="text-slate-400 hover:text-slate-600 cursor-pointer">
+              <button onClick={() => removeFilterChip('datePosted')} className="text-slate-400 hover:text-slate-600 cursor-pointer" aria-label="Remove date posted filter">
                 <X className="w-3 h-3" />
               </button>
             </span>
           )}
 
-          <button onClick={resetAllFilters} className="ml-auto text-primary-600 hover:underline hover:text-primary-800 font-bold text-[10px] tracking-tight cursor-pointer">
+          <button 
+            onClick={resetAllFilters} 
+            className="ml-auto text-primary-600 hover:underline hover:text-primary-800 font-bold text-[10px] tracking-tight cursor-pointer focus:outline-none"
+            title="Reset all search queries and active filters globally"
+            aria-label="Clear all active filters globally"
+          >
             Clear all filters
           </button>
         </div>
@@ -462,18 +531,15 @@ export default function ExplorePage() {
         <aside className="hidden md:block bg-white border border-slate-200 rounded-xl p-5 shadow-sm sticky top-20 max-h-[85vh] overflow-y-auto space-y-6">
           <div className="flex items-center justify-between pb-3 border-b border-slate-100">
             <h3 className="font-bold text-slate-800 text-xs flex items-center gap-1.5">
-              <SlidersHorizontal className="w-4 h-4 text-primary-600" />
+              <SlidersHorizontal className="w-4 h-4 text-primary-600" aria-hidden="true" />
               <span>Filters</span>
             </h3>
-            <button onClick={resetAllFilters} className="text-xs text-primary-600 hover:text-primary-850 font-semibold transition-colors cursor-pointer">
-              Clear all
-            </button>
           </div>
 
           {/* Internship Alerts Button */}
           <button
             onClick={() => setShowAlertModal(true)}
-            className="w-full py-2 bg-slate-905 hover:bg-slate-900 text-white font-bold rounded-lg text-xs transition-all duration-150 shadow-sm cursor-pointer flex items-center justify-center gap-1.5 border border-slate-900 hover:border-slate-800"
+            className="w-full py-2 bg-slate-905 hover:bg-slate-900 text-white font-bold rounded-lg text-xs transition-all duration-150 shadow-sm cursor-pointer flex items-center justify-center gap-1.5 border border-slate-900 hover:border-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-500"
           >
             <span>🔔 Create Alert</span>
           </button>
@@ -492,12 +558,13 @@ export default function ExplorePage() {
               placeholder="Paste resume skills or summary here..."
               value={resumeText}
               onChange={(e) => setResumeText(e.target.value)}
+              aria-label="Paste resume content for AI matching"
               className="w-full h-20 p-2 bg-slate-50 border border-slate-200 rounded-lg text-[11px] outline-none focus:border-primary-400 focus:bg-white resize-none"
             />
             <button
               onClick={handleResumeMatch}
               disabled={isMatchingResume || !resumeText.trim()}
-              className="w-full py-1.5 bg-primary-600 hover:bg-primary-700 disabled:bg-slate-200 disabled:text-slate-400 text-white font-bold rounded-lg text-xs transition-colors shadow-sm cursor-pointer"
+              className="w-full py-1.5 bg-primary-600 hover:bg-primary-700 disabled:bg-slate-200 disabled:text-slate-400 text-white font-bold rounded-lg text-xs transition-colors shadow-sm cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-500"
             >
               {isMatchingResume ? 'Matching Resume...' : 'Match Resume'}
             </button>
@@ -527,7 +594,7 @@ export default function ExplorePage() {
                           page: '1'
                         });
                       }}
-                      className="w-3.5 h-3.5 text-primary-600 border-slate-350 focus:ring-primary-500/20"
+                      className="w-3.5 h-3.5 text-primary-600 border-slate-350 focus:ring-primary-500/20 focus:outline-none focus:ring-2"
                     />
                     <span>{opt.label}</span>
                   </label>
@@ -549,7 +616,7 @@ export default function ExplorePage() {
                       type="checkbox"
                       checked={selectedLocations.includes(loc.toLowerCase())}
                       onChange={() => toggleArrayFilter('location', selectedLocations, loc.toLowerCase())}
-                      className="w-3.5 h-3.5 rounded text-primary-600 border-slate-350 focus:ring-primary-500/20"
+                      className="w-3.5 h-3.5 rounded text-primary-600 border-slate-350 focus:ring-primary-500/20 focus:outline-none focus:ring-2"
                     />
                     <span>{loc}</span>
                   </label>
@@ -558,48 +625,43 @@ export default function ExplorePage() {
             </div>
           </div>
 
-          {/* Minimum Stipend */}
-          <div className="space-y-2 border-t border-slate-100 pt-4">
-            <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-slate-400">
-              <label htmlFor="stipend-min-slider" className="cursor-pointer">Min Stipend (₹/mo)</label>
-              <span className="text-slate-755 text-xs font-extrabold bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
-                {localStipendMin === '0' ? 'Any' : `₹${parseInt(localStipendMin).toLocaleString()}`}
-              </span>
+          {/* Stipend Budget Inputs */}
+          <div className="space-y-3 border-t border-slate-100 pt-4">
+            <h4 className="font-bold text-[10px] uppercase tracking-wider text-slate-400 font-sans">Stipend Range (₹/mo)</h4>
+            <div className="flex items-center gap-2">
+              <div className="flex-1">
+                <label htmlFor="stipend-min-input" className="sr-only">Minimum Stipend</label>
+                <input
+                  id="stipend-min-input"
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  placeholder="Min: e.g. 5000"
+                  value={localStipendMin === '0' || localStipendMin === '' ? '' : localStipendMin}
+                  onChange={handleMinStipendChange}
+                  className="w-full px-2 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-lg outline-none focus:border-primary-600 focus:ring-2 focus:ring-primary-100/50 text-slate-700 font-medium placeholder:text-slate-400"
+                />
+              </div>
+              <span className="text-slate-400 text-xs font-semibold">to</span>
+              <div className="flex-grow">
+                <label htmlFor="stipend-max-input" className="sr-only">Maximum Stipend</label>
+                <input
+                  id="stipend-max-input"
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  placeholder="Max: e.g. 30000"
+                  value={localStipendMax === '60000' || localStipendMax === '' ? '' : localStipendMax}
+                  onChange={handleMaxStipendChange}
+                  className="w-full px-2 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-lg outline-none focus:border-primary-600 focus:ring-2 focus:ring-primary-100/50 text-slate-700 font-medium placeholder:text-slate-400"
+                />
+              </div>
             </div>
-            <input
-              id="stipend-min-slider"
-              type="range"
-              min="0"
-              max="40000"
-              step="2500"
-              value={localStipendMin}
-              onChange={(e) => setLocalStipendMin(e.target.value)}
-              onMouseUp={() => updateQueryParams({ stipendMin: localStipendMin === '0' ? null : localStipendMin, page: '1' })}
-              onTouchEnd={() => updateQueryParams({ stipendMin: localStipendMin === '0' ? null : localStipendMin, page: '1' })}
-              className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-primary-600"
-            />
-          </div>
-
-          {/* Maximum Stipend */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-slate-400">
-              <label htmlFor="stipend-max-slider" className="cursor-pointer">Max Stipend (₹/mo)</label>
-              <span className="text-slate-755 text-xs font-extrabold bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
-                {localStipendMax === '60000' ? 'No Limit' : `₹${parseInt(localStipendMax).toLocaleString()}`}
-              </span>
-            </div>
-            <input
-              id="stipend-max-slider"
-              type="range"
-              min="5000"
-              max="60000"
-              step="5000"
-              value={localStipendMax}
-              onChange={(e) => setLocalStipendMax(e.target.value)}
-              onMouseUp={() => updateQueryParams({ stipendMax: localStipendMax === '60000' ? null : localStipendMax, page: '1' })}
-              onTouchEnd={() => updateQueryParams({ stipendMax: localStipendMax === '60000' ? null : localStipendMax, page: '1' })}
-              className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-primary-600"
-            />
+            {stipendError && (
+              <p className="text-[10px] text-red-500 font-bold leading-tight" role="alert">
+                ⚠️ {stipendError}
+              </p>
+            )}
           </div>
 
           {/* Durations */}
@@ -615,7 +677,7 @@ export default function ExplorePage() {
                       type="checkbox"
                       checked={selectedDurations.includes(dur.value)}
                       onChange={() => toggleArrayFilter('duration', selectedDurations, dur.value)}
-                      className="w-3.5 h-3.5 rounded text-primary-600 border-slate-350 focus:ring-primary-500/20"
+                      className="w-3.5 h-3.5 rounded text-primary-600 border-slate-350 focus:ring-primary-500/20 focus:outline-none focus:ring-2"
                     />
                     <span>{dur.label}</span>
                   </label>
@@ -635,7 +697,7 @@ export default function ExplorePage() {
                   <button
                     key={skill}
                     onClick={() => toggleArrayFilter('skills', selectedSkills, sLower)}
-                    className={`px-2.5 py-1.5 text-[10px] font-semibold rounded-lg border transition-all duration-205 ease-in-out cursor-pointer ${
+                    className={`px-2.5 py-1.5 text-[10px] font-semibold rounded-lg border transition-all duration-205 ease-in-out cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-500 ${
                       isSelected
                         ? 'bg-primary-600 text-white border-primary-600 shadow-sm ring-2 ring-primary-500/20'
                         : 'bg-slate-50 text-slate-600 border-slate-300 hover:bg-slate-100 hover:border-slate-400 hover:text-slate-900'
@@ -661,7 +723,7 @@ export default function ExplorePage() {
                       type="checkbox"
                       checked={selectedSources.includes(src.toLowerCase())}
                       onChange={() => toggleArrayFilter('source', selectedSources, src.toLowerCase())}
-                      className="w-3.5 h-3.5 rounded text-primary-600 border-slate-350 focus:ring-primary-500/20"
+                      className="w-3.5 h-3.5 rounded text-primary-600 border-slate-350 focus:ring-primary-500/20 focus:outline-none focus:ring-2"
                     />
                     <span>{src}</span>
                   </label>
@@ -688,7 +750,7 @@ export default function ExplorePage() {
               onChange={(e) => setLocalLegitimacyMin(e.target.value)}
               onMouseUp={() => updateQueryParams({ legitimacyMin: localLegitimacyMin === '45' ? null : localLegitimacyMin, page: '1' })}
               onTouchEnd={() => updateQueryParams({ legitimacyMin: localLegitimacyMin === '45' ? null : localLegitimacyMin, page: '1' })}
-              className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-primary-600"
+              className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-primary-600 focus:outline-none focus:ring-2 focus:ring-primary-500"
             />
           </div>
 
@@ -717,7 +779,7 @@ export default function ExplorePage() {
                           page: '1'
                         });
                       }}
-                      className="w-3.5 h-3.5 text-primary-600 border-slate-350 focus:ring-primary-500/20"
+                      className="w-3.5 h-3.5 text-primary-600 border-slate-350 focus:ring-primary-500/20 focus:outline-none focus:ring-2"
                     />
                     <span>{opt.label}</span>
                   </label>
@@ -789,7 +851,7 @@ export default function ExplorePage() {
               </p>
               <button
                 onClick={() => refetch()}
-                className="px-4 py-2 bg-red-600 text-white rounded-lg text-xs font-semibold hover:bg-red-700 shadow-sm transition-colors cursor-pointer"
+                className="px-4 py-2 bg-red-600 text-white rounded-lg text-xs font-semibold hover:bg-red-700 shadow-sm transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-red-400"
               >
                 Retry Request
               </button>
@@ -803,7 +865,7 @@ export default function ExplorePage() {
               </p>
               <button
                 onClick={resetAllFilters}
-                className="px-4 py-2 bg-primary-600 text-white font-bold rounded-lg text-xs hover:bg-primary-700 shadow-sm transition-colors cursor-pointer"
+                className="px-4 py-2 bg-primary-600 text-white font-bold rounded-lg text-xs hover:bg-primary-700 shadow-sm transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-500"
               >
                 Clear All Filters
               </button>
@@ -822,7 +884,8 @@ export default function ExplorePage() {
               <button
                 disabled={listingsData.page <= 1}
                 onClick={() => updateQueryParams({ page: (listingsData.page - 1).toString() })}
-                className="flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-slate-700 text-xs font-semibold hover:bg-slate-50 disabled:opacity-50 disabled:hover:bg-white disabled:cursor-not-allowed transition-colors cursor-pointer"
+                aria-label="Go to previous page"
+                className="flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-slate-700 text-xs font-semibold hover:bg-slate-50 disabled:opacity-50 disabled:hover:bg-white disabled:cursor-not-allowed transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-500"
               >
                 <ChevronLeft className="w-3.5 h-3.5" />
                 <span>Prev</span>
@@ -842,7 +905,9 @@ export default function ExplorePage() {
                     <button
                       key={`page-${pNum}`}
                       onClick={() => updateQueryParams({ page: pNum.toString() })}
-                      className={`w-8 h-8 rounded-lg flex items-center justify-center border transition-all cursor-pointer ${
+                      aria-current={isCurrent ? 'page' : undefined}
+                      aria-label={`Go to page ${pNum}`}
+                      className={`w-8 h-8 rounded-lg flex items-center justify-center border transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-500 ${
                         isCurrent
                           ? 'bg-primary-600 text-white border-primary-600 shadow-sm'
                           : 'bg-white border-slate-200 text-slate-655 hover:bg-slate-50'
@@ -861,7 +926,8 @@ export default function ExplorePage() {
               <button
                 disabled={listingsData.page >= listingsData.totalPages}
                 onClick={() => updateQueryParams({ page: (listingsData.page + 1).toString() })}
-                className="flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-slate-700 text-xs font-semibold hover:bg-slate-50 disabled:opacity-50 disabled:hover:bg-white disabled:cursor-not-allowed transition-colors cursor-pointer"
+                aria-label="Go to next page"
+                className="flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-slate-700 text-xs font-semibold hover:bg-slate-50 disabled:opacity-50 disabled:hover:bg-white disabled:cursor-not-allowed transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-500"
               >
                 <span>Next</span>
                 <ChevronRight className="w-3.5 h-3.5" />
@@ -877,7 +943,7 @@ export default function ExplorePage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center animate-fade-in">
           <div onClick={() => setShowAlertModal(false)} className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm transition-all"></div>
           <div className="relative bg-white rounded-xl p-6 shadow-xl border border-slate-200 max-w-md w-full mx-4 space-y-4 z-10 animate-scale-in">
-            <button onClick={() => setShowAlertModal(false)} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 cursor-pointer">
+            <button onClick={() => setShowAlertModal(false)} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 cursor-pointer focus:outline-none focus:ring-2 focus:ring-slate-300 rounded" aria-label="Close alerts modal">
               <X className="w-4 h-4" />
             </button>
             <div className="text-center space-y-1 pt-2">
@@ -910,13 +976,14 @@ export default function ExplorePage() {
                   type="email"
                   required
                   placeholder="Enter your email address"
+                  aria-label="Email address for subscription alerts"
                   value={alertEmail}
                   onChange={(e) => setAlertEmail(e.target.value)}
                   className="w-full px-3.5 py-2 bg-slate-50 border border-slate-205 rounded-lg outline-none focus:border-primary-400 focus:bg-white text-xs"
                 />
                 <button
                   type="submit"
-                  className="w-full py-2 bg-primary-600 hover:bg-primary-700 text-white font-bold rounded-lg text-xs transition-colors shadow-sm cursor-pointer"
+                  className="w-full py-2 bg-primary-600 hover:bg-primary-700 text-white font-bold rounded-lg text-xs transition-colors shadow-sm cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-500"
                 >
                   Subscribe to Alerts
                 </button>
@@ -941,7 +1008,8 @@ export default function ExplorePage() {
               <h3 className="font-bold text-slate-800 text-sm">Mobile Filters</h3>
               <button
                 onClick={() => setShowMobileFilters(false)}
-                className="p-1 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 cursor-pointer"
+                className="p-1 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 cursor-pointer focus:outline-none focus:ring-2 focus:ring-slate-300"
+                aria-label="Close mobile filters sidebar"
               >
                 <Check className="w-4 h-4" />
               </button>
@@ -959,14 +1027,14 @@ export default function ExplorePage() {
                 ].map(opt => {
                   const id = `mobile-remote-${opt.value || 'all'}`;
                   return (
-                    <label key={opt.value} htmlFor={id} className="flex items-center gap-2 text-xs text-slate-650 hover:text-slate-900 cursor-pointer font-medium">
+                    <label key={opt.value} htmlFor={id} className="flex items-center gap-2 text-xs text-slate-655 hover:text-slate-900 cursor-pointer font-medium">
                       <input
                         id={id}
                         type="radio"
                         name="mobileRemoteOpt"
                         checked={remote === opt.value}
                         onChange={() => updateQueryParams({ remote: opt.value || null, page: '1' })}
-                        className="w-3.5 h-3.5 text-primary-600 border-slate-350"
+                        className="w-3.5 h-3.5 text-primary-600 border-slate-350 focus:outline-none focus:ring-2 focus:ring-primary-500"
                       />
                       <span>{opt.label}</span>
                     </label>
@@ -988,7 +1056,7 @@ export default function ExplorePage() {
                         type="checkbox"
                         checked={selectedLocations.includes(loc.toLowerCase())}
                         onChange={() => toggleArrayFilter('location', selectedLocations, loc.toLowerCase())}
-                        className="w-3.5 h-3.5 rounded text-primary-600 border-slate-350"
+                        className="w-3.5 h-3.5 rounded text-primary-600 border-slate-350 focus:outline-none focus:ring-2 focus:ring-primary-500"
                       />
                       <span>{loc}</span>
                     </label>
@@ -997,43 +1065,43 @@ export default function ExplorePage() {
               </div>
             </div>
 
-            {/* Stipend sliders */}
-            <div className="space-y-2 border-t border-slate-100 pt-3">
-              <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                <label htmlFor="mobile-stipend-min" className="cursor-pointer">Min Stipend (₹/mo)</label>
-                <span className="text-slate-700 text-xs font-bold">
-                  {stipendMin === '0' ? 'Any' : `₹${parseInt(stipendMin).toLocaleString()}`}
-                </span>
+            {/* Stipend Budget Inputs (Mobile) */}
+            <div className="space-y-3 border-t border-slate-100 pt-3">
+              <h4 className="font-bold text-[10px] uppercase tracking-wider text-slate-400">Stipend Range (₹/mo)</h4>
+              <div className="flex items-center gap-2">
+                <div className="flex-1">
+                  <label htmlFor="mobile-stipend-min-input" className="sr-only">Minimum Stipend</label>
+                  <input
+                    id="mobile-stipend-min-input"
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    placeholder="Min: e.g. 5000"
+                    value={localStipendMin === '0' || localStipendMin === '' ? '' : localStipendMin}
+                    onChange={handleMinStipendChange}
+                    className="w-full px-2 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-lg outline-none focus:border-primary-600 focus:ring-2 focus:ring-primary-100/50 text-slate-700 font-medium placeholder:text-slate-400"
+                  />
+                </div>
+                <span className="text-slate-400 text-xs font-semibold">to</span>
+                <div className="flex-grow">
+                  <label htmlFor="mobile-stipend-max-input" className="sr-only">Maximum Stipend</label>
+                  <input
+                    id="mobile-stipend-max-input"
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    placeholder="Max: e.g. 30000"
+                    value={localStipendMax === '60000' || localStipendMax === '' ? '' : localStipendMax}
+                    onChange={handleMaxStipendChange}
+                    className="w-full px-2 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-lg outline-none focus:border-primary-600 focus:ring-2 focus:ring-primary-100/50 text-slate-700 font-medium placeholder:text-slate-400"
+                  />
+                </div>
               </div>
-              <input
-                id="mobile-stipend-min"
-                type="range"
-                min="0"
-                max="40000"
-                step="2500"
-                value={stipendMin}
-                onChange={(e) => updateQueryParams({ stipendMin: e.target.value === '0' ? null : e.target.value, page: '1' })}
-                className="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-primary-600"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                <label htmlFor="mobile-stipend-max" className="cursor-pointer">Max Stipend (₹/mo)</label>
-                <span className="text-slate-700 text-xs font-bold">
-                  {!stipendMax ? 'No Limit' : `₹${parseInt(stipendMax).toLocaleString()}`}
-                </span>
-              </div>
-              <input
-                id="mobile-stipend-max"
-                type="range"
-                min="5000"
-                max="60000"
-                step="5000"
-                value={stipendMax || '60000'}
-                onChange={(e) => updateQueryParams({ stipendMax: e.target.value === '60000' ? null : e.target.value, page: '1' })}
-                className="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-primary-600"
-              />
+              {stipendError && (
+                <p className="text-[10px] text-red-500 font-bold leading-tight" role="alert">
+                  ⚠️ {stipendError}
+                </p>
+              )}
             </div>
 
             {/* Duration */}
@@ -1049,7 +1117,7 @@ export default function ExplorePage() {
                         type="checkbox"
                         checked={selectedDurations.includes(dur.value)}
                         onChange={() => toggleArrayFilter('duration', selectedDurations, dur.value)}
-                        className="w-3.5 h-3.5 rounded text-primary-600 border-slate-350"
+                        className="w-3.5 h-3.5 rounded text-primary-600 border-slate-350 focus:outline-none focus:ring-2 focus:ring-primary-500"
                       />
                       <span>{dur.label}</span>
                     </label>
@@ -1069,7 +1137,7 @@ export default function ExplorePage() {
                     <button
                       key={skill}
                       onClick={() => toggleArrayFilter('skills', selectedSkills, sLower)}
-                      className={`px-2 py-1 text-[10px] font-semibold rounded border transition-all cursor-pointer ${
+                      className={`px-2 py-1 text-[10px] font-semibold rounded border transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-500 ${
                         isSelected
                           ? 'bg-primary-600 text-white border-primary-600 shadow-sm'
                           : 'bg-white text-slate-655 border-slate-200 hover:bg-slate-50'
@@ -1095,7 +1163,7 @@ export default function ExplorePage() {
                         type="checkbox"
                         checked={selectedSources.includes(src.toLowerCase())}
                         onChange={() => toggleArrayFilter('source', selectedSources, src.toLowerCase())}
-                        className="w-3.5 h-3.5 rounded text-primary-600 border-slate-350"
+                        className="w-3.5 h-3.5 rounded text-primary-600 border-slate-350 focus:outline-none focus:ring-2 focus:ring-primary-500"
                       />
                       <span>{src}</span>
                     </label>
@@ -1108,7 +1176,7 @@ export default function ExplorePage() {
             <div className="space-y-2 border-t border-slate-100 pt-3">
               <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-slate-400">
                 <label htmlFor="mobile-legitimacy-min" className="cursor-pointer">Min Legitimacy Score</label>
-                <span className="text-slate-700 text-xs font-bold">
+                <span className="text-slate-705 text-xs font-bold bg-slate-100 px-1.5 py-0.5 rounded border">
                   {legitimacyMin}% Match
                 </span>
               </div>
@@ -1120,7 +1188,7 @@ export default function ExplorePage() {
                 step="5"
                 value={legitimacyMin}
                 onChange={(e) => updateQueryParams({ legitimacyMin: e.target.value === '45' ? null : e.target.value, page: '1' })}
-                className="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-primary-600"
+                className="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-primary-600 focus:outline-none focus:ring-2 focus:ring-primary-500"
               />
             </div>
 
@@ -1144,7 +1212,7 @@ export default function ExplorePage() {
                         name="mobileDatePostedOpt"
                         checked={datePosted === opt.value}
                         onChange={() => updateQueryParams({ datePosted: opt.value || null, page: '1' })}
-                        className="w-3.5 h-3.5 text-primary-600 border-slate-350"
+                        className="w-3.5 h-3.5 text-primary-600 border-slate-350 focus:outline-none focus:ring-2 focus:ring-primary-500"
                       />
                       <span>{opt.label}</span>
                     </label>
@@ -1159,7 +1227,7 @@ export default function ExplorePage() {
                 resetAllFilters();
                 setShowMobileFilters(false);
               }}
-              className="mt-4 w-full py-2.5 border border-slate-200 rounded-lg text-slate-700 text-xs font-bold hover:bg-slate-50 transition-colors cursor-pointer animate-fade-in"
+              className="mt-4 w-full py-2.5 border border-slate-200 rounded-lg text-slate-700 text-xs font-bold hover:bg-slate-50 transition-colors cursor-pointer animate-fade-in focus:outline-none focus:ring-2 focus:ring-primary-500"
             >
               Clear All Filters
             </button>

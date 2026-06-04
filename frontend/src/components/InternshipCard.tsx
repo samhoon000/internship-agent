@@ -1,15 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { Bookmark, MapPin, DollarSign, Calendar, ExternalLink, ShieldCheck } from 'lucide-react';
+import { Bookmark, MapPin, DollarSign, IndianRupee, Banknote, Calendar, ExternalLink, ShieldCheck } from 'lucide-react';
 import type { Internship } from '../api';
+import { formatStipend } from '../utils/formatters';
 
 interface InternshipCardProps {
   internship: Internship;
   onBookmarkChanged?: () => void;
 }
 
-export default function InternshipCard({ internship, onBookmarkChanged }: InternshipCardProps) {
+function InternshipCard({ internship, onBookmarkChanged }: InternshipCardProps) {
   const [isSaved, setIsSaved] = useState(false);
+  const [showTooltip, setShowTooltip] = useState(false);
 
   useEffect(() => {
     try {
@@ -57,23 +59,41 @@ export default function InternshipCard({ internship, onBookmarkChanged }: Intern
       : 'CO';
   };
 
+  // Format stipend using centralized utility
+  const stipendInfo = formatStipend(internship.stipend);
+
+  const renderStipendIcon = () => {
+    if (stipendInfo.currency === 'INR') {
+      return <IndianRupee className="w-3.5 h-3.5 text-slate-400 shrink-0" aria-hidden="true" />;
+    }
+    if (stipendInfo.currency === 'USD') {
+      return <DollarSign className="w-3.5 h-3.5 text-slate-400 shrink-0" aria-hidden="true" />;
+    }
+    return <Banknote className="w-3.5 h-3.5 text-slate-400 shrink-0" aria-hidden="true" />;
+  };
+
   return (
-    <div className="group relative bg-white border border-slate-250/70 rounded-xl p-5 hover:border-slate-350 hover:shadow-sm transition-all duration-150 flex flex-col h-full justify-between">
+    <div className="group relative bg-white border border-slate-250/70 rounded-xl p-5 hover:border-slate-350 hover:shadow-sm transition-all duration-150 flex flex-col h-full justify-between focus-within:ring-2 focus-within:ring-primary-650 focus-within:ring-offset-2">
       {/* Save Button */}
       <button
         onClick={toggleSave}
-        className={`absolute top-5 right-5 p-1.5 rounded-lg border transition-colors duration-150 z-10 ${
+        className={`absolute top-5 right-5 p-1.5 rounded-lg border transition-colors duration-150 z-10 focus:outline-none focus:ring-2 focus:ring-primary-500 ${
           isSaved
             ? 'bg-primary-50 text-primary-600 border-primary-200'
             : 'bg-transparent text-slate-400 border-transparent hover:text-slate-600 hover:bg-slate-50'
         }`}
+        aria-label={isSaved ? 'Remove from Saved' : 'Save Internship'}
         title={isSaved ? 'Remove from Saved' : 'Save Internship'}
       >
         <Bookmark className="w-4 h-4 fill-current" />
       </button>
 
       {/* Main card link structure */}
-      <Link to={`/internships/${encodeURIComponent(internship.apply_link)}`} className="flex flex-col flex-grow justify-between h-full">
+      <Link 
+        to={`/internships/${encodeURIComponent(internship.apply_link)}`} 
+        className="flex flex-col flex-grow justify-between h-full outline-none focus:outline-none"
+        aria-label={`View details for ${internship.role} at ${internship.company_name}`}
+      >
         <div className="space-y-3 flex-grow">
           <div className="flex items-start gap-3">
             {/* Company Logo Avatar (Minimalist box) */}
@@ -82,10 +102,13 @@ export default function InternshipCard({ internship, onBookmarkChanged }: Intern
             </div>
 
             <div className="flex-1 min-w-0 pr-6">
-              <h3 className="text-sm font-semibold text-slate-900 group-hover:text-primary-600 transition-colors truncate">
+              <h3 
+                className="text-sm font-semibold text-slate-900 group-hover:text-primary-600 transition-colors line-clamp-2 min-h-[2.5rem] leading-snug" 
+                title={internship.role}
+              >
                 {internship.role}
               </h3>
-              <p className="text-xs text-slate-500 font-medium truncate mt-0.5">
+              <p className="text-xs text-slate-500 font-medium truncate mt-0.5" title={internship.company_name}>
                 {internship.company_name}
               </p>
             </div>
@@ -93,19 +116,19 @@ export default function InternshipCard({ internship, onBookmarkChanged }: Intern
 
           {/* Details Flex Row */}
           <div className="flex flex-wrap items-center gap-y-1.5 gap-x-4 text-xs text-slate-500">
-            <div className="flex items-center gap-1 truncate">
-              <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+            <div className="flex items-center gap-1 truncate" title={`Location: ${internship.location || 'On-site'}`}>
+              <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0" aria-hidden="true" />
               <span className="truncate">{internship.location || 'On-site'}</span>
             </div>
 
-            <div className="flex items-center gap-1 truncate">
-              <DollarSign className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-              <span className="font-semibold text-slate-700 truncate">{internship.stipend || 'Unspecified'}</span>
+            <div className="flex items-center gap-1 truncate" title={`Stipend: ${stipendInfo.formatted}`}>
+              {renderStipendIcon()}
+              <span className="font-semibold text-slate-700 truncate">{stipendInfo.formatted}</span>
             </div>
 
             {internship.duration && (
-              <div className="flex items-center gap-1 truncate">
-                <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+              <div className="flex items-center gap-1 truncate" title={`Duration: ${internship.duration}`}>
+                <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0" aria-hidden="true" />
                 <span className="truncate">{internship.duration}</span>
               </div>
             )}
@@ -160,14 +183,51 @@ export default function InternshipCard({ internship, onBookmarkChanged }: Intern
 
         {/* Footer info: Legitimacy Score Check */}
         <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs mt-4 shrink-0">
-          <div className="flex items-center gap-1.5">
-            <ShieldCheck className={`w-3.5 h-3.5 ${legitColors.iconClass}`} />
-            <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${legitColors.bg}`}>
-              {internship.match_score !== undefined ? `${internship.match_score}% Match` : `${internship.legitimacy_score}% Match`}
-            </span>
+          <div className="flex items-center gap-1.5 relative">
+            <ShieldCheck className={`w-3.5 h-3.5 ${legitColors.iconClass}`} aria-hidden="true" />
+            <button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setShowTooltip(!showTooltip);
+              }}
+              onMouseEnter={() => setShowTooltip(true)}
+              onMouseLeave={() => setShowTooltip(false)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setShowTooltip(!showTooltip);
+                }
+              }}
+              className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border transition-colors cursor-help flex items-center gap-1 focus:outline-none focus:ring-2 focus:ring-primary-500 ${legitColors.bg}`}
+              aria-label="Match score detail tooltip button"
+              aria-expanded={showTooltip}
+            >
+              <span>{internship.match_score !== undefined ? `${internship.match_score}% Match` : `${internship.legitimacy_score}% Match`}</span>
+              <span className="text-[8px] opacity-75">ⓘ</span>
+            </button>
+            
+            {showTooltip && (
+              <div 
+                role="tooltip"
+                className="absolute bottom-full left-0 mb-2 w-60 bg-slate-900 text-white text-[10px] rounded-lg p-3 shadow-xl z-20 leading-relaxed font-normal animate-fade-in"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <p className="font-bold text-[11px] mb-1.5 text-primary-400">Match score is calculated using:</p>
+                <ul className="space-y-1 list-disc list-inside text-slate-300">
+                  <li><strong className="text-white">Resume skills:</strong> technical overlap</li>
+                  <li><strong className="text-white">Requirements:</strong> core qualifications</li>
+                  <li><strong className="text-white">Role relevance:</strong> title category checks</li>
+                  <li><strong className="text-white">Experience alignment:</strong> parsing checks</li>
+                </ul>
+                <div className="absolute top-full left-4 w-2 h-2 bg-slate-900 transform rotate-45 -translate-y-1"></div>
+              </div>
+            )}
           </div>
           
-          <span className="text-[10px] font-semibold text-slate-400 inline-flex items-center gap-0.5 group-hover:text-primary-600 transition-colors">
+          <span className="text-[10px] font-semibold text-slate-400 inline-flex items-center gap-0.5 group-hover:text-primary-650 transition-colors">
             Details <ExternalLink className="w-2.5 h-2.5" />
           </span>
         </div>
@@ -175,3 +235,5 @@ export default function InternshipCard({ internship, onBookmarkChanged }: Intern
     </div>
   );
 }
+
+export default React.memo(InternshipCard);
