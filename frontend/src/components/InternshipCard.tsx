@@ -11,7 +11,8 @@ interface InternshipCardProps {
 
 function InternshipCard({ internship, onBookmarkChanged }: InternshipCardProps) {
   const [isSaved, setIsSaved] = useState(false);
-  const [showTooltip, setShowTooltip] = useState(false);
+  const [showMatchTooltip, setShowMatchTooltip] = useState(false);
+  const [showLegitTooltip, setShowLegitTooltip] = useState(false);
 
   useEffect(() => {
     try {
@@ -43,14 +44,22 @@ function InternshipCard({ internship, onBookmarkChanged }: InternshipCardProps) 
     }
   };
 
-  // Get color configurations depending on legitimacy score
-  const getLegitimacyColors = (score: number) => {
-    if (score >= 90) return { bg: 'bg-emerald-50 text-emerald-700 border-emerald-200/50', iconClass: 'text-emerald-600' };
-    if (score >= 75) return { bg: 'bg-blue-50 text-blue-700 border-blue-200/50', iconClass: 'text-blue-600' };
-    return { bg: 'bg-slate-50 text-slate-700 border-slate-200/60', iconClass: 'text-slate-500' };
+  // Get color configurations depending on score
+  const getScoreColors = (score: number | undefined) => {
+    if (score === undefined) {
+      return { bg: 'bg-slate-50 text-slate-600 border-slate-200/65', iconClass: 'text-slate-500', focus: 'focus:ring-slate-500' };
+    }
+    if (score >= 90) {
+      return { bg: 'bg-emerald-50 text-emerald-700 border-emerald-200/65', iconClass: 'text-emerald-600', focus: 'focus:ring-emerald-500' };
+    }
+    if (score >= 70) {
+      return { bg: 'bg-amber-50 text-amber-800 border-amber-200/65', iconClass: 'text-amber-600', focus: 'focus:ring-amber-500' };
+    }
+    return { bg: 'bg-rose-50 text-rose-700 border-rose-200/65', iconClass: 'text-rose-600', focus: 'focus:ring-rose-500' };
   };
 
-  const legitColors = getLegitimacyColors(internship.legitimacy_score);
+  const legitColors = getScoreColors(internship.legitimacy_score);
+  const matchColors = getScoreColors(internship.match_score);
 
   // Generate initials for logo avatar
   const getInitials = (name: string) => {
@@ -181,50 +190,97 @@ function InternshipCard({ internship, onBookmarkChanged }: InternshipCardProps) 
           )}
         </div>
 
-        {/* Footer info: Legitimacy Score Check */}
+        {/* Footer info: Display BOTH Match & Legitimacy Scores */}
         <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs mt-4 shrink-0">
-          <div className="flex items-center gap-1.5 relative">
-            <ShieldCheck className={`w-3.5 h-3.5 ${legitColors.iconClass}`} aria-hidden="true" />
-            <button
-              type="button"
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                setShowTooltip(!showTooltip);
-              }}
-              onMouseEnter={() => setShowTooltip(true)}
-              onMouseLeave={() => setShowTooltip(false)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
+          <div className="flex flex-wrap items-center gap-1.5">
+            {/* Match Score Badge */}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
-                  setShowTooltip(!showTooltip);
-                }
-              }}
-              className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border transition-colors cursor-help flex items-center gap-1 focus:outline-none focus:ring-2 focus:ring-primary-500 ${legitColors.bg}`}
-              aria-label="Match score detail tooltip button"
-              aria-expanded={showTooltip}
-            >
-              <span>{internship.match_score !== undefined ? `${internship.match_score}% Match` : `${internship.legitimacy_score}% Match`}</span>
-              <span className="text-[8px] opacity-75">ⓘ</span>
-            </button>
-            
-            {showTooltip && (
-              <div 
-                role="tooltip"
-                className="absolute bottom-full left-0 mb-2 w-60 bg-slate-900 text-white text-[10px] rounded-lg p-3 shadow-xl z-20 leading-relaxed font-normal animate-fade-in"
-                onClick={(e) => e.stopPropagation()}
+                  setShowMatchTooltip(!showMatchTooltip);
+                  setShowLegitTooltip(false);
+                }}
+                onMouseEnter={() => {
+                  setShowMatchTooltip(true);
+                  setShowLegitTooltip(false);
+                }}
+                onMouseLeave={() => setShowMatchTooltip(false)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setShowMatchTooltip(!showMatchTooltip);
+                    setShowLegitTooltip(false);
+                  }
+                }}
+                className={`text-[9px] sm:text-[10px] font-semibold px-1.5 py-0.5 rounded border transition-colors cursor-help flex items-center gap-0.5 focus:outline-none focus:ring-2 focus:ring-offset-1 ${matchColors.focus} ${matchColors.bg}`}
+                aria-label="Match score detail tooltip button"
+                aria-expanded={showMatchTooltip}
               >
-                <p className="font-bold text-[11px] mb-1.5 text-primary-400">Match score is calculated using:</p>
-                <ul className="space-y-1 list-disc list-inside text-slate-300">
-                  <li><strong className="text-white">Resume skills:</strong> technical overlap</li>
-                  <li><strong className="text-white">Requirements:</strong> core qualifications</li>
-                  <li><strong className="text-white">Role relevance:</strong> title category checks</li>
-                  <li><strong className="text-white">Experience alignment:</strong> parsing checks</li>
-                </ul>
-                <div className="absolute top-full left-4 w-2 h-2 bg-slate-900 transform rotate-45 -translate-y-1"></div>
-              </div>
-            )}
+                <span>Match Score: {internship.match_score !== undefined ? `${internship.match_score}%` : 'N/A'}</span>
+                <span className="text-[8px] opacity-75">ⓘ</span>
+              </button>
+              
+              {showMatchTooltip && (
+                <div 
+                  role="tooltip"
+                  className="absolute bottom-full left-0 mb-2 w-52 bg-slate-900 text-white text-[10px] rounded-lg p-2.5 shadow-xl z-20 leading-relaxed font-normal animate-fade-in"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <p className="font-bold text-[11px] mb-1 text-primary-400">Match Score</p>
+                  <p className="text-slate-300">Skill relevance. Measures how well the internship requirements match your profile and resume skills.</p>
+                  <div className="absolute top-full left-4 w-2 h-2 bg-slate-900 transform rotate-45 -translate-y-1"></div>
+                </div>
+              )}
+            </div>
+
+            {/* Legitimacy Score Badge */}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setShowLegitTooltip(!showLegitTooltip);
+                  setShowMatchTooltip(false);
+                }}
+                onMouseEnter={() => {
+                  setShowLegitTooltip(true);
+                  setShowMatchTooltip(false);
+                }}
+                onMouseLeave={() => setShowLegitTooltip(false)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setShowLegitTooltip(!showLegitTooltip);
+                    setShowMatchTooltip(false);
+                  }
+                }}
+                className={`text-[9px] sm:text-[10px] font-semibold px-1.5 py-0.5 rounded border transition-colors cursor-help flex items-center gap-0.5 focus:outline-none focus:ring-2 focus:ring-offset-1 ${legitColors.focus} ${legitColors.bg}`}
+                aria-label="Legitimacy score detail tooltip button"
+                aria-expanded={showLegitTooltip}
+              >
+                <ShieldCheck className="w-3 h-3 shrink-0" aria-hidden="true" />
+                <span>Legitimacy Score: {internship.legitimacy_score}%</span>
+                <span className="text-[8px] opacity-75">ⓘ</span>
+              </button>
+              
+              {showLegitTooltip && (
+                <div 
+                  role="tooltip"
+                  className="absolute bottom-full left-0 mb-2 w-52 bg-slate-900 text-white text-[10px] rounded-lg p-2.5 shadow-xl z-20 leading-relaxed font-normal animate-fade-in"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <p className="font-bold text-[11px] mb-1 text-primary-400">Legitimacy Score</p>
+                  <p className="text-slate-300">Confidence internship is genuine. Confidence listing is active, verified, and not a duplicate.</p>
+                  <div className="absolute top-full left-4 w-2 h-2 bg-slate-900 transform rotate-45 -translate-y-1"></div>
+                </div>
+              )}
+            </div>
           </div>
           
           <span className="text-[10px] font-semibold text-slate-400 inline-flex items-center gap-0.5 group-hover:text-primary-650 transition-colors">
