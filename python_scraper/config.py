@@ -5,8 +5,14 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent
 
 # Database Configuration
-# Local SQL connection: Database Name: internship, Table Name: internships, Host: localhost, no password
-DATABASE_URL = "mysql+pymysql://root:@localhost/internship"
+DATABASE_URL = os.getenv("DATABASE_URL", "mysql+pymysql://root:@localhost/internship")
+
+# Expiration and Liveness settings
+ACTIVE_THRESHOLD_DAYS = 21
+INACTIVE_THRESHOLD_DAYS = 30
+ARCHIVED_THRESHOLD_DAYS = 90
+PURGE_OLD_RECORDS = False
+CONSECUTIVE_FAILURES_LIMIT = 3
 
 # ── Scraper Settings ──────────────────────────────────────────────
 REQUEST_TIMEOUT = 20  # seconds

@@ -1,0 +1,24 @@
+FROM mcr.microsoft.com/playwright:v1.42.0-jammy
+
+# Install python3, pip and virtualenv
+RUN apt-get update && apt-get install -y python3 python3-pip python3-venv && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy python scraper files and install requirements
+COPY python_scraper/requirements.txt ./python_scraper/
+RUN pip3 install --no-cache-dir -r python_scraper/requirements.txt
+
+# Copy package files and install backend dependencies
+COPY backend/package*.json ./backend/
+RUN cd backend && npm ci
+
+# Copy the rest of the application
+COPY . .
+
+# Run playwright install for python dependencies
+RUN python3 -m playwright install chromium
+
+WORKDIR /app/backend
+CMD ["node", "worker.js"]

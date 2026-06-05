@@ -42,3 +42,6 @@ debug_html/
 rejections.jsonl
 __pycache__/
 *.pyc
+python_scraper/scratch/
+**/scratch/
+

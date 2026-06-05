@@ -40,74 +40,19 @@ if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8', line_buffering=True)
 
 
+from python_scraper.database.cleanup_service import (
+    cleanup_old_internships as service_cleanup_old_internships,
+    remove_dead_links_async as service_remove_dead_links_async
+)
+
 def cleanup_old_internships(session) -> int:
-    """
-    STEP 1 — Remove Old Internships Automatically.
-    Deletes internships older than 4 days.
-    Prefer posted_at if available, fallback to created_at.
-    """
-    logger.info("STEP 1: Starting cleanup of stale internships (> 4 days)...")
-    four_days_ago = datetime.utcnow() - timedelta(days=4)
-    
-    try:
-        deleted = session.query(Internship).filter(
-            ((Internship.posted_at != None) & (Internship.posted_at < four_days_ago)) |
-            ((Internship.posted_at == None) & (Internship.created_at < four_days_ago))
-        ).delete(synchronize_session=False)
-        session.commit()
-        logger.info(f"Cleanup complete. Deleted {deleted} stale internships.")
-        return deleted
-    except Exception as e:
-        session.rollback()
-        logger.error(f"Error during stale internships cleanup: {e}", exc_info=True)
-        return 0
-
-
-async def check_url_liveness_async(apply_link: str, source: str, semaphore) -> tuple[str, bool]:
-    """Asynchronously checks if a URL is still live."""
-    async with semaphore:
-        try:
-            # Run the synchronous validate_url GET request in a thread pool to avoid blocking
-            is_live, reason, html = await asyncio.to_thread(validate_url, apply_link, source, True)
-            return apply_link, is_live
-        except Exception:
-            return apply_link, False
-
+    """Wrapper calling the shared cleanup service."""
+    soft_deleted, purged = service_cleanup_old_internships(session)
+    return soft_deleted + purged
 
 async def remove_dead_links(session) -> int:
-    """
-    STEP 2 — Remove Dead/Expired Listings.
-    Validates existing apply links in the database concurrently and deletes invalid ones.
-    """
-    logger.info("STEP 2: Validating existing links in the database for liveness...")
-    try:
-        records = session.query(Internship.apply_link, Internship.source).all()
-        if not records:
-            logger.info("No existing records in the database to validate.")
-            return 0
-
-        logger.info(f"Checking liveness of {len(records)} existing links...")
-        
-        # Concurrency limit of 15 semaphores
-        semaphore = asyncio.Semaphore(15)
-        tasks = [check_url_liveness_async(rec.apply_link, rec.source, semaphore) for rec in records]
-        results = await asyncio.gather(*tasks)
-        
-        dead_links = [link for link, is_live in results if not is_live]
-        
-        if dead_links:
-            logger.info(f"Detected {len(dead_links)} dead or expired links. Deleting from database...")
-            session.query(Internship).filter(Internship.apply_link.in_(dead_links)).delete(synchronize_session=False)
-            session.commit()
-            logger.info(f"Deleted {len(dead_links)} dead listings.")
-            return len(dead_links)
-        
-        logger.info("No dead links detected.")
-        return 0
-    except Exception as e:
-        session.rollback()
-        logger.error(f"Error during dead links validation: {e}", exc_info=True)
-        return 0
+    """Wrapper calling the shared liveness validation service."""
+    return await service_remove_dead_links_async(session)
 
 
 async def scrape_all_sources_parallel(browser_context) -> tuple[list[dict], list]:
@@ -251,31 +196,69 @@ def refresh_stats(session) -> int:
 
 
 async def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="Internship discovery pipeline")
+    parser.add_argument("--cleanup", action="store_true", help="Run stale cleanups only")
+    parser.add_argument("--liveness", action="store_true", help="Run liveness checks only")
+    parser.add_argument("--scrape", action="store_true", help="Run scraper only")
+    args = parser.parse_args()
+
     start_time = time.time()
-    logger.info("=== STARTING FULL AUTOMATED DATA FRESHNESS PIPELINE ===")
     
-    # 1. Initialize DB and run columns migration
+    # If no flags are provided, run full pipeline
+    run_full = not (args.cleanup or args.liveness or args.scrape)
+
+    if args.cleanup:
+        logger.info("=== STARTING STALE CLEANUP PIPELINE ===")
+        init_db()
+        session = get_db_session()
+        cleanup_old_internships(session)
+        session.close()
+        logger.info(f"Cleanup finished in {time.time() - start_time:.2f}s")
+        return
+
+    if args.liveness:
+        logger.info("=== STARTING LIVENESS CHECK PIPELINE ===")
+        init_db()
+        session = get_db_session()
+        await remove_dead_links(session)
+        session.close()
+        logger.info(f"Liveness checks finished in {time.time() - start_time:.2f}s")
+        return
+
+    logger.info("=== STARTING AUTOMATED SCRAPING PIPELINE ===")
+    
+    # Initialize DB
     init_db()
     
-    session = get_db_session()
+    deleted_stale = 0
+    deleted_expired = 0
     
-    # 2. STEP 1 - Stale Cleanups
-    deleted_stale = cleanup_old_internships(session)
-    
-    # 3. STEP 2 - Dead Links Cleanups
-    deleted_expired = await remove_dead_links(session)
-    
-    # Close session for database cleanup tasks before scraping begins
-    session.close()
+    if run_full:
+        session = get_db_session()
+        # STEP 1 - Stale Cleanups
+        deleted_stale = cleanup_old_internships(session)
+        # STEP 2 - Dead Links Cleanups
+        deleted_expired = await remove_dead_links(session)
+        # Close session before scraping
+        session.close()
     
     # 4. STEP 3 - Async Parallel Scraping
     all_scraped_items = []
     scrapers = []
     
     # Launch browser ONCE and block unnecessary resources
+    from python_scraper.config import PLAYWRIGHT_HEADLESS
     async with async_playwright() as p:
-        logger.info("Launching headless Chromium browser instance...")
-        browser = await p.chromium.launch(headless=True)
+        logger.info(f"Launching Chromium browser instance (headless={PLAYWRIGHT_HEADLESS})...")
+        browser = await p.chromium.launch(
+            headless=PLAYWRIGHT_HEADLESS,
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+                "--disable-infobars"
+            ]
+        )
         
         # Reuse browser context
         browser_context = await browser.new_context(

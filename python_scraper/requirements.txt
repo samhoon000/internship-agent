@@ -10,4 +10,5 @@ apscheduler
 python-dotenv
 lxml
 plotly
+alembic
 rapidfuzz

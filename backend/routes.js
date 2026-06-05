@@ -1,25 +1,53 @@
 import express from 'express';
-import { spawn } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import rateLimit from 'express-rate-limit';
+import sanitizeHtml from 'sanitize-html';
+import Redis from 'ioredis';
+import { Queue } from 'bullmq';
 import pool from './db.js';
 
 const router = express.Router();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(__dirname, '..');
 
-// Helper: Parse stipend string to numeric value
+// Redis & BullMQ Queue Configurations
+const redisHost = process.env.REDIS_HOST || '127.0.0.1';
+const redisPort = process.env.REDIS_PORT || 6379;
+
+const redisConfig = {
+  host: redisHost,
+  port: redisPort,
+  maxRetriesPerRequest: null // Required by BullMQ
+};
+
+const redisClient = new Redis(redisConfig);
+
+redisClient.on('error', (err) => {
+  console.error('[Redis Client Error]', err);
+});
+
+const scraperQueue = new Queue('scraper-queue', { connection: redisClient });
+const cleanupQueue = new Queue('cleanup-queue', { connection: redisClient });
+const livenessQueue = new Queue('liveness-queue', { connection: redisClient });
+
+// API Rate Limiting Middleware
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Limit each IP to 100 requests per window
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests from this IP, please try again after 15 minutes.' }
+});
+
+router.use(apiLimiter);
+
+// Helper: Parse stipend string to numeric value (used for match score calc in JS)
 function parseStipend(stipendStr) {
   if (!stipendStr) return 0;
-  
-  // Clean string: remove commas and rupee/dollar symbols
   const clean = stipendStr.replace(/,/g, '').replace(/[₹$]/g, '');
-  
-  // Find all sequences of numbers
   const matches = clean.match(/\d+/g);
   if (!matches) return 0;
-  
-  // If it's a range like "5000-10000", take the average
   const nums = matches.map(Number);
   if (nums.length >= 2) {
     return (nums[0] + nums[1]) / 2;
@@ -27,40 +55,7 @@ function parseStipend(stipendStr) {
   return nums[0];
 }
 
-// Cache structure for internships to speed up operations and allow complex filtering/sorting
-let dbCache = {
-  data: [],
-  lastUpdated: null
-};
-
-// Middleware/Helper to refresh cache if empty or older than 30 seconds
-async function getCachedInternships() {
-  const now = Date.now();
-  if (dbCache.data.length === 0 || !dbCache.lastUpdated || (now - dbCache.lastUpdated > 30000)) {
-    try {
-      const [rows] = await pool.query('SELECT * FROM internships ORDER BY COALESCE(posted_at, created_at) DESC');
-      
-      // Process rows to include parsed numeric stipends and clean skills array
-      dbCache.data = rows.map(row => {
-        const skillsArray = row.skills 
-          ? row.skills.split(',').map(s => s.trim()).filter(s => s.length > 0)
-          : [];
-        return {
-          ...row,
-          skills_list: skillsArray,
-          stipend_numeric: parseStipend(row.stipend)
-        };
-      });
-      dbCache.lastUpdated = now;
-      console.log(`[Cache] Reloaded ${dbCache.data.length} internships from database.`);
-    } catch (error) {
-      console.error('Error fetching internships for cache:', error);
-      // Fallback to existing cache if DB fails
-    }
-  }
-  return dbCache.data;
-}// 1. GET /api/internships - Search, Filter, Sort, Paginate
-// Helper to compute match score dynamically based on user filters
+// Helper: Compute match score dynamically based on user filters
 function getMatchScore(row, query = {}) {
   const { skills = '', location = '', remote = '', stipendMin = '0' } = query;
   
@@ -115,203 +110,241 @@ function getMatchScore(row, query = {}) {
   return Math.min(100, Math.max(0, matchScore));
 }
 
+// SQL Query Builder helper
+function buildInternshipsQuery(query) {
+  let sql = `FROM internships WHERE is_active = 1 AND relevance_score >= 40`;
+  let params = [];
+
+  const {
+    search = '',
+    location = '',
+    remote = '',
+    duration = '',
+    skills = '',
+    stipendMin = '0',
+    stipendMax = '',
+    source = '',
+    legitimacyMin = '45',
+    datePosted = '',
+    confidence = ''
+  } = query;
+
+  // Search filter
+  if (search.trim()) {
+    const q = `%${search.trim()}%`;
+    sql += ` AND (company_name LIKE ? OR role LIKE ? OR skills LIKE ? OR location LIKE ?)`;
+    params.push(q, q, q, q);
+  }
+
+  // Location filter
+  if (location) {
+    const selectedLocations = location.split(',').map(s => s.trim().toLowerCase());
+    const locClauses = [];
+    selectedLocations.forEach(loc => {
+      if (loc === 'remote') {
+        locClauses.push(`(remote = 1 OR location LIKE '%remote%' OR location LIKE '%work from home%')`);
+      } else if (loc === 'hybrid') {
+        locClauses.push(`location LIKE '%hybrid%'`);
+      } else {
+        locClauses.push(`location LIKE ?`);
+        params.push(`%${loc}%`);
+      }
+    });
+    if (locClauses.length > 0) {
+      sql += ` AND (${locClauses.join(' OR ')})`;
+    }
+  }
+
+  // Remote filter
+  if (remote) {
+    if (remote === 'remote') {
+      sql += ` AND (remote = 1 OR location LIKE '%remote%' OR location LIKE '%work from home%')`;
+    } else if (remote === 'onsite') {
+      sql += ` AND (remote = 0 AND (location IS NULL OR (location NOT LIKE '%hybrid%' AND location NOT LIKE '%remote%' AND location NOT LIKE '%work from home%')))`;
+    } else if (remote === 'hybrid') {
+      sql += ` AND location LIKE '%hybrid%'`;
+    }
+  }
+
+  // Duration filter
+  if (duration) {
+    const selectedDurations = duration.split(',').map(s => s.trim().toLowerCase());
+    const durClauses = [];
+    selectedDurations.forEach(d => {
+      if (d === '6+') {
+        durClauses.push(`duration REGEXP '[6-9]|[0-9]{2,}'`);
+      } else {
+        const num = parseInt(d, 10);
+        if (!isNaN(num)) {
+          durClauses.push(`duration LIKE ?`);
+          params.push(`%${num}%`);
+        }
+      }
+    });
+    if (durClauses.length > 0) {
+      sql += ` AND (${durClauses.join(' OR ')})`;
+    }
+  }
+
+  // Skills filter (matches ALL selected skills)
+  if (skills) {
+    const selectedSkills = skills.split(',').map(s => s.trim().toLowerCase());
+    selectedSkills.forEach(skill => {
+      sql += ` AND skills LIKE ?`;
+      params.push(`%${skill}%`);
+    });
+  }
+
+  // Sources filter
+  if (source) {
+    const selectedSources = source.split(',').map(s => s.trim());
+    if (selectedSources.length > 0) {
+      const placeholders = selectedSources.map(() => '?').join(', ');
+      sql += ` AND source IN (${placeholders})`;
+      params.push(...selectedSources);
+    }
+  }
+
+  // Min stipend filter
+  const minStip = parseInt(stipendMin, 10) || 0;
+  if (minStip > 0) {
+    sql += ` AND stipend_numeric >= ?`;
+    params.push(minStip);
+  }
+
+  // Max stipend filter
+  if (stipendMax) {
+    const maxStip = parseInt(stipendMax, 10);
+    if (!isNaN(maxStip)) {
+      sql += ` AND stipend_numeric <= ?`;
+      params.push(maxStip);
+    }
+  }
+
+  // Min legitimacy filter
+  const minLegit = parseInt(legitimacyMin, 10) || 45;
+  sql += ` AND legitimacy_score >= ?`;
+  params.push(minLegit);
+
+  // Date Posted filter
+  if (datePosted) {
+    let days = 0;
+    if (datePosted === 'today') days = 1;
+    else if (datePosted === '3days') days = 3;
+    else if (datePosted === '7days') days = 7;
+    else if (datePosted === '30days') days = 30;
+
+    if (days > 0) {
+      sql += ` AND (posted_at >= NOW() - INTERVAL ? DAY OR (posted_at IS NULL AND created_at >= NOW() - INTERVAL ? DAY))`;
+      params.push(days, days);
+    }
+  }
+
+  // Confidence filter
+  if (confidence) {
+    const selectedConfidences = confidence.split(',').map(s => s.trim());
+    if (selectedConfidences.length > 0) {
+      const placeholders = selectedConfidences.map(() => '?').join(', ');
+      sql += ` AND confidence IN (${placeholders})`;
+      params.push(...selectedConfidences);
+    }
+  }
+
+  return { sql, params };
+}
+
 // 1. GET /api/internships - Search, Filter, Sort, Paginate
 router.get('/internships', async (req, res) => {
   try {
-    // Extract query parameters (supporting full filter range)
     const {
-      search = '',
-      location = '',
-      remote = '',
-      duration = '',
-      skills = '',
-      stipendMin = '0',
-      stipendMax = '',
-      source = '',
-      legitimacyMin = '45',
-      sort = 'newest',
-      datePosted = '',
-      confidence = '',
       page = '1',
-      limit = '10'
+      limit = '10',
+      sort = 'newest'
     } = req.query;
 
     const pageNum = parseInt(page, 10) || 1;
     const limitNum = parseInt(limit, 10) || 10;
     const offset = (pageNum - 1) * limitNum;
 
-    // Fetch all records from cache
-    let data = await getCachedInternships();
+    const { sql: whereSql, params: whereParams } = buildInternshipsQuery(req.query);
 
-    // BASE relevance check (relevance_score >= 40)
-    data = data.filter(row => (row.relevance_score || 0) >= 40);
+    const columns = [
+      'apply_link', 'company_name', 'role', 'stipend', 'stipend_numeric', 'paid',
+      'location', 'remote', 'duration', 'skills', 'source', 'legitimacy_score',
+      'confidence_score', 'freshness_score', 'confidence', 'confidence_tier',
+      'relevance_score', 'posted_at', 'created_at'
+    ].join(', ');
 
-    // Search filter (company, role, skills, location)
-    if (search.trim()) {
-      const q = search.trim().toLowerCase();
-      data = data.filter(row => 
-        (row.company_name && row.company_name.toLowerCase().includes(q)) ||
-        (row.role && row.role.toLowerCase().includes(q)) ||
-        (row.skills && row.skills.toLowerCase().includes(q)) ||
-        (row.location && row.location.toLowerCase().includes(q))
-      );
-    }
-
-    // Location filter
-    if (location) {
-      const selectedLocations = location.split(',').map(s => s.trim().toLowerCase());
-      data = data.filter(row => {
-        return selectedLocations.some(loc => {
-          if (loc === 'remote') {
-            return row.remote === 1 || (row.location && (row.location.toLowerCase().includes('remote') || row.location.toLowerCase().includes('work from home')));
-          } else if (loc === 'hybrid') {
-            return row.location && row.location.toLowerCase().includes('hybrid');
-          } else {
-            return row.location && row.location.toLowerCase().includes(loc);
-          }
-        });
-      });
-    }
-
-    // Remote filter
-    if (remote) {
-      data = data.filter(row => {
-        if (remote === 'remote') {
-          return row.remote === 1 || (row.location && (row.location.toLowerCase().includes('remote') || row.location.toLowerCase().includes('work from home')));
-        } else if (remote === 'onsite') {
-          return row.remote === 0 && !(row.location && row.location.toLowerCase().includes('hybrid'));
-        } else if (remote === 'hybrid') {
-          return row.location && row.location.toLowerCase().includes('hybrid');
-        }
-        return true;
-      });
-    }
-
-    // Duration filter
-    if (duration) {
-      const selectedDurations = duration.split(',').map(s => s.trim().toLowerCase());
-      data = data.filter(row => {
-        return selectedDurations.some(d => {
-          if (d === '6+') {
-            return row.duration && /[6-9]|[0-9]{2,}/.test(row.duration);
-          } else {
-            const num = parseInt(d, 10);
-            return row.duration && row.duration.toLowerCase().includes(num.toString());
-          }
-        });
-      });
-    }
-
-    // Skills filter (matches ALL selected skills via substring overlaps)
-    if (skills) {
-      const selectedSkills = skills.split(',').map(s => s.trim().toLowerCase());
-      data = data.filter(row => {
-        const jobSkills = row.skills_list.map(s => s.toLowerCase());
-        return selectedSkills.every(skill => 
-          jobSkills.some(js => js.includes(skill) || skill.includes(js))
-        );
-      });
-    }
-
-    // Sources filter
-    if (source) {
-      const selectedSources = source.split(',').map(s => s.trim().toLowerCase());
-      data = data.filter(row => selectedSources.includes((row.source || '').toLowerCase()));
-    }
-
-    // Min stipend filter
-    const minStip = parseInt(stipendMin, 10) || 0;
-    if (minStip > 0) {
-      data = data.filter(row => (row.stipend_numeric || 0) >= minStip);
-    }
-
-    // Max stipend filter
-    if (stipendMax) {
-      const maxStip = parseInt(stipendMax, 10);
-      if (!isNaN(maxStip)) {
-        data = data.filter(row => (row.stipend_numeric || 0) <= maxStip);
-      }
-    }
-
-    // Min legitimacy filter
-    const minLegit = parseInt(legitimacyMin, 10) || 45;
-    data = data.filter(row => (row.legitimacy_score || 0) >= minLegit);
-
-    // Date Posted filter
-    if (datePosted) {
-      const now = new Date();
-      data = data.filter(row => {
-        const postedTime = row.posted_at ? new Date(row.posted_at) : new Date(row.created_at);
-        const diffTime = Math.abs(now - postedTime);
-        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-        if (datePosted === 'today') return diffDays <= 1;
-        if (datePosted === '3days') return diffDays <= 3;
-        if (datePosted === '7days') return diffDays <= 7;
-        if (datePosted === '30days') return diffDays <= 30;
-        return true;
-      });
-    }
-
-    // Confidence filter
-    if (confidence) {
-      const selectedConfidences = confidence.split(',').map(s => s.trim().toUpperCase());
-      data = data.filter(row => selectedConfidences.includes((row.confidence || '').toUpperCase()));
-    }
-
-    // Calculate dynamic match scores for remaining items
-    let formattedInternships = data.map(row => {
-      const mScore = getMatchScore(row, req.query);
-      return {
-        ...row,
-        match_score: mScore
-      };
-    });
-
-    // Sort mapping
     if (sort === 'legitimacy') {
-      // Sort by computed match_score DESC
-      formattedInternships.sort((a, b) => b.match_score - a.match_score || new Date(b.posted_at || b.created_at) - new Date(a.posted_at || a.created_at));
-    } else if (sort === 'stipend') {
-      formattedInternships.sort((a, b) => b.stipend_numeric - a.stipend_numeric || new Date(b.posted_at || b.created_at) - new Date(a.posted_at || a.created_at));
-    } else if (sort === 'remote_first') {
-      formattedInternships.sort((a, b) => {
-        const aRemote = a.remote === 1 || (a.location && (a.location.toLowerCase().includes('remote') || a.location.toLowerCase().includes('work from home'))) ? 1 : 0;
-        const bRemote = b.remote === 1 || (b.location && (b.location.toLowerCase().includes('remote') || b.location.toLowerCase().includes('work from home'))) ? 1 : 0;
-        return bRemote - aRemote || new Date(b.posted_at || b.created_at) - new Date(a.posted_at || a.created_at);
+      const querySql = `SELECT ${columns} ${whereSql}`;
+      const [rows] = await pool.query(querySql, whereParams);
+
+      const processed = rows.map(row => {
+        const skills_list = row.skills ? row.skills.split(',').map(s => s.trim()).filter(Boolean) : [];
+        const match_score = getMatchScore({ ...row, skills_list }, req.query);
+        return { ...row, skills_list, match_score };
       });
-    } else if (sort === 'company') {
-      formattedInternships.sort((a, b) => (a.company_name || '').localeCompare(b.company_name || ''));
-    } else if (sort === 'recently_added') {
-      formattedInternships.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+      processed.sort((a, b) => b.match_score - a.match_score || new Date(b.posted_at || b.created_at) - new Date(a.posted_at || a.created_at));
+
+      const total = processed.length;
+      const paginated = processed.slice(offset, offset + limitNum);
+
+      return res.json({
+        internships: paginated,
+        total,
+        page: pageNum,
+        limit: limitNum,
+        totalPages: Math.ceil(total / limitNum)
+      });
     } else {
-      // newest
-      formattedInternships.sort((a, b) => new Date(b.posted_at || b.created_at) - new Date(a.posted_at || a.created_at));
+      const countSql = `SELECT COUNT(*) as total ${whereSql}`;
+      const [[{ total }]] = await pool.query(countSql, whereParams);
+
+      let orderClause = '';
+      if (sort === 'stipend') {
+        orderClause = ` ORDER BY stipend_numeric DESC, COALESCE(posted_at, created_at) DESC`;
+      } else if (sort === 'remote_first') {
+        orderClause = ` ORDER BY (CASE WHEN remote = 1 OR location LIKE '%remote%' OR location LIKE '%work from home%' THEN 1 ELSE 0 END) DESC, COALESCE(posted_at, created_at) DESC`;
+      } else if (sort === 'company') {
+        orderClause = ` ORDER BY company_name ASC`;
+      } else if (sort === 'recently_added') {
+        orderClause = ` ORDER BY created_at DESC`;
+      } else {
+        orderClause = ` ORDER BY COALESCE(posted_at, created_at) DESC`;
+      }
+
+      const querySql = `SELECT ${columns} ${whereSql}${orderClause} LIMIT ? OFFSET ?`;
+      const queryParams = [...whereParams, limitNum, offset];
+
+      const [rows] = await pool.query(querySql, queryParams);
+
+      const paginated = rows.map(row => {
+        const skills_list = row.skills ? row.skills.split(',').map(s => s.trim()).filter(Boolean) : [];
+        const match_score = getMatchScore({ ...row, skills_list }, req.query);
+        return { ...row, skills_list, match_score };
+      });
+
+      return res.json({
+        internships: paginated,
+        total,
+        page: pageNum,
+        limit: limitNum,
+        totalPages: Math.ceil(total / limitNum)
+      });
     }
-
-    // Paginate in memory
-    const total = formattedInternships.length;
-    const paginatedInternships = formattedInternships.slice(offset, offset + limitNum);
-
-    res.json({
-      internships: paginatedInternships,
-      total,
-      page: pageNum,
-      limit: limitNum,
-      totalPages: Math.ceil(total / limitNum)
-    });
   } catch (error) {
     console.error('Error fetching internships:', error);
     res.status(500).json({ error: 'Internal Server Error' });
   }
 });
 
-// 2. GET /api/internships/:applyLink - Specific internship details
+// 2. GET /api/internships/:applyLink - Specific internship details (with XSS sanitization)
 router.get('/internships/:applyLink', async (req, res) => {
   try {
     const rawLink = req.params.applyLink;
     let decodedLink = decodeURIComponent(rawLink);
     
-    // Try to decode as Base64 if it looks like it, otherwise use URI decoded
     try {
       const buffer = Buffer.from(rawLink, 'base64');
       const base64Decoded = buffer.toString('utf-8');
@@ -319,34 +352,73 @@ router.get('/internships/:applyLink', async (req, res) => {
         decodedLink = base64Decoded;
       }
     } catch (e) {
-      // Not base64, continue with URI decoded
+      // Ignored
     }
 
-    const internships = await getCachedInternships();
-    const item = internships.find(i => i.apply_link === decodedLink);
-
-    if (!item) {
+    const [rows] = await pool.query('SELECT * FROM internships WHERE apply_link = ? AND is_active = 1', [decodedLink]);
+    
+    if (rows.length === 0) {
       return res.status(404).json({ error: 'Internship not found' });
     }
 
-    // Attach dynamic match score to the item
+    const row = rows[0];
+    const skills_list = row.skills ? row.skills.split(',').map(s => s.trim()).filter(Boolean) : [];
+    
+    // XSS Sanitization
+    if (row.description) {
+      row.description = sanitizeHtml(row.description, {
+        allowedTags: [
+          'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'p', 'a', 'ul', 'ol',
+          'nl', 'li', 'b', 'i', 'strong', 'em', 'strike', 'code', 'hr', 'br', 'div',
+          'table', 'thead', 'caption', 'tbody', 'tr', 'th', 'td', 'pre', 'span'
+        ],
+        allowedAttributes: {
+          a: [ 'href', 'name', 'target' ],
+          img: [ 'src', 'alt' ],
+          span: [ 'style' ],
+          div: [ 'style' ]
+        }
+      });
+    }
+
     const itemWithScore = {
-      ...item,
-      match_score: getMatchScore(item, req.query)
+      ...row,
+      skills_list,
+      match_score: getMatchScore({ ...row, skills_list }, req.query)
     };
 
-    // Find suggested similar internships
-    const similar = internships
-      .filter(i => i.apply_link !== decodedLink && (
-        (i.role && item.role && i.role.toLowerCase().split(' ')[0] === item.role.toLowerCase().split(' ')[0]) ||
-        (i.source === item.source) ||
-        (i.skills_list.some(s => item.skills_list.includes(s)))
-      ))
-      .slice(0, 3)
-      .map(i => ({
-        ...i,
-        match_score: getMatchScore(i, req.query)
-      }));
+    // Find similar internships
+    const firstRoleWord = row.role.split(' ')[0] + '%';
+    const skillsMatchPatterns = skills_list.map(s => `%${s}%`);
+
+    let similarSql = `
+      SELECT apply_link, company_name, role, stipend, stipend_numeric, paid,
+             location, remote, duration, skills, source, legitimacy_score,
+             confidence_score, freshness_score, confidence, confidence_tier,
+             relevance_score, posted_at, created_at
+      FROM internships
+      WHERE is_active = 1 AND apply_link != ? AND relevance_score >= 40
+        AND (role LIKE ? OR source = ?
+    `;
+    const similarParams = [decodedLink, firstRoleWord, row.source];
+
+    if (skillsMatchPatterns.length > 0) {
+      const skillsClauses = skillsMatchPatterns.map(() => 'skills LIKE ?').join(' OR ');
+      similarSql += ` OR ${skillsClauses}`;
+      similarParams.push(...skillsMatchPatterns);
+    }
+    similarSql += `) LIMIT 3`;
+
+    const [similarRows] = await pool.query(similarSql, similarParams);
+    
+    const similar = similarRows.map(sRow => {
+      const sSkillsList = sRow.skills ? sRow.skills.split(',').map(s => s.trim()).filter(Boolean) : [];
+      return {
+        ...sRow,
+        skills_list: sSkillsList,
+        match_score: getMatchScore({ ...sRow, skills_list: sSkillsList }, req.query)
+      };
+    });
 
     res.json({
       internship: itemWithScore,
@@ -358,18 +430,19 @@ router.get('/internships/:applyLink', async (req, res) => {
   }
 });
 
-// 3. GET /api/filters - Unique values for populating filter controls
+// 3. GET /api/filters - Unique values for filters (excludes description, active only)
 router.get('/filters', async (req, res) => {
   try {
-    const internships = await getCachedInternships();
+    const [rows] = await pool.query(
+      'SELECT location, source, skills FROM internships WHERE is_active = 1 AND relevance_score >= 40'
+    );
     
     const locationsSet = new Set();
     const sourcesSet = new Set();
     const skillsMap = {};
     
-    internships.forEach(item => {
+    rows.forEach(item => {
       if (item.location) {
-        // clean up locations
         const locs = item.location.split(',').map(l => l.trim());
         locs.forEach(l => {
           if (l && l.toLowerCase() !== 'remote' && l.toLowerCase() !== 'work from home') {
@@ -382,23 +455,15 @@ router.get('/filters', async (req, res) => {
         sourcesSet.add(item.source);
       }
       
-      if (item.skills_list) {
-        item.skills_list.forEach(skill => {
+      if (item.skills) {
+        const skills_list = item.skills.split(',').map(s => s.trim()).filter(Boolean);
+        skills_list.forEach(skill => {
           const sNormalized = skill.toLowerCase();
-          // Capitalize skill cleanly
-          let sDisplay = skill;
-          if (sNormalized === 'sql') sDisplay = 'SQL';
-          else if (sNormalized === 'python') sDisplay = 'Python';
-          else if (sNormalized === 'power bi') sDisplay = 'Power BI';
-          else if (sNormalized === 'tableau') sDisplay = 'Tableau';
-          else if (sNormalized === 'excel') sDisplay = 'Excel';
-          
           skillsMap[sNormalized] = (skillsMap[sNormalized] || 0) + 1;
         });
       }
     });
 
-    // Sort skills by frequency
     const popularSkills = Object.entries(skillsMap)
       .map(([name, count]) => {
         let displayName = name;
@@ -424,23 +489,24 @@ router.get('/filters', async (req, res) => {
   }
 });
 
-// 4. GET /api/stats - Dynamic charts data for Recharts
+// 4. GET /api/stats - Analytics (excludes description, active only)
 router.get('/stats', async (req, res) => {
   try {
-    const internships = await getCachedInternships();
+    const [rows] = await pool.query(
+      'SELECT company_name, role, stipend, stipend_numeric, remote, location, source, skills, legitimacy_score, posted_at, created_at FROM internships WHERE is_active = 1'
+    );
     
-    // 1. Total & General Metrics
-    const totalCount = internships.length;
-    const highlyLegit = internships.filter(i => i.legitimacy_score >= 80).length;
+    const totalCount = rows.length;
+    const highlyLegit = rows.filter(i => i.legitimacy_score >= 80).length;
     const avgLegitimacy = totalCount > 0 
-      ? internships.reduce((sum, i) => sum + i.legitimacy_score, 0) / totalCount 
+      ? rows.reduce((sum, i) => sum + i.legitimacy_score, 0) / totalCount 
       : 0;
     
-    // 2. Skills demand
     const skillsCount = {};
-    internships.forEach(i => {
-      if (i.skills_list) {
-        i.skills_list.forEach(s => {
+    rows.forEach(i => {
+      if (i.skills) {
+        const skills_list = i.skills.split(',').map(s => s.trim()).filter(Boolean);
+        skills_list.forEach(s => {
           const sNorm = s.toLowerCase();
           let sDisplay = s;
           if (sNorm === 'sql') sDisplay = 'SQL';
@@ -457,10 +523,9 @@ router.get('/stats', async (req, res) => {
     const skillsDemand = Object.entries(skillsCount)
       .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value)
-      .slice(0, 10); // top 10
+      .slice(0, 10);
 
-    // 3. Top paying roles (with stipend > 0)
-    const paidListings = internships
+    const paidListings = rows
       .filter(i => i.stipend_numeric > 0)
       .sort((a, b) => b.stipend_numeric - a.stipend_numeric)
       .slice(0, 8)
@@ -471,11 +536,10 @@ router.get('/stats', async (req, res) => {
         stipendText: i.stipend
       }));
 
-    // 4. Remote vs Onsite flex split
     let remoteCount = 0;
     let onsiteCount = 0;
-    internships.forEach(i => {
-      if (i.remote === 1 || i.remote === true || (i.location && i.location.toLowerCase().includes('remote'))) {
+    rows.forEach(i => {
+      if (i.remote === 1 || i.remote === true || (i.location && (i.location.toLowerCase().includes('remote') || i.location.toLowerCase().includes('work from home')))) {
         remoteCount++;
       } else {
         onsiteCount++;
@@ -486,18 +550,16 @@ router.get('/stats', async (req, res) => {
       { name: 'On-site', value: onsiteCount }
     ];
 
-    // 5. Source platforms split
     const sourceCount = {};
-    internships.forEach(i => {
+    rows.forEach(i => {
       if (i.source) {
         sourceCount[i.source] = (sourceCount[i.source] || 0) + 1;
       }
     });
     const sourceDistribution = Object.entries(sourceCount).map(([name, value]) => ({ name, value }));
 
-    // 6. Top hiring companies
     const companyCount = {};
-    internships.forEach(i => {
+    rows.forEach(i => {
       if (i.company_name) {
         companyCount[i.company_name] = (companyCount[i.company_name] || 0) + 1;
       }
@@ -507,9 +569,8 @@ router.get('/stats', async (req, res) => {
       .sort((a, b) => b.count - a.count)
       .slice(0, 8);
 
-    // 7. Location distribution (top 8)
     const locationCount = {};
-    internships.forEach(i => {
+    rows.forEach(i => {
       if (i.location) {
         const locClean = i.location.split(',')[0].trim();
         if (locClean && locClean.toLowerCase() !== 'remote' && locClean.toLowerCase() !== 'work from home') {
@@ -522,9 +583,8 @@ router.get('/stats', async (req, res) => {
       .sort((a, b) => b.count - a.count)
       .slice(0, 8);
 
-    // 8. Average stipend by role type
     const stipendByRole = {};
-    internships.forEach(i => {
+    rows.forEach(i => {
       if (i.stipend_numeric > 0) {
         let roleCat = 'Other';
         const roleLower = (i.role || '').toLowerCase();
@@ -567,71 +627,147 @@ router.get('/stats', async (req, res) => {
   }
 });
 
-// 5. POST /api/scrapers/run - Run Playwright scrapers in background
-let activeScraperProcess = null;
-let scraperLogs = [];
-let scraperStatus = 'idle'; // idle, running, completed, failed
-
-router.post('/scrapers/run', (req, res) => {
-  if (scraperStatus === 'running') {
-    return res.status(400).json({ status: 'running', message: 'Scraper cycle is already running.', logs: scraperLogs });
-  }
-
-  scraperStatus = 'running';
-  scraperLogs = [`[${new Date().toISOString()}] Launching AI Discovery Scrapers...\n`];
-
-  console.log('[Scraper] Triggering python run.py');
-  
-  // Spawn Python scraper process
-  const pythonCmd = 'python';
-  const args = ['run.py'];
-  
-  // Set working directory to ROOT_DIR so python module resolving behaves correctly
-  activeScraperProcess = spawn(pythonCmd, args, {
-    cwd: ROOT_DIR,
-    env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
-  });
-
-  activeScraperProcess.stdout.on('data', (data) => {
-    const logStr = data.toString();
-    scraperLogs.push(logStr);
-    console.log(`[Scraper Output] ${logStr.trim()}`);
-  });
-
-  activeScraperProcess.stderr.on('data', (data) => {
-    const logStr = data.toString();
-    scraperLogs.push(`[ERROR] ${logStr}`);
-    console.error(`[Scraper Error] ${logStr.trim()}`);
-  });
-
-  activeScraperProcess.on('close', (code) => {
-    activeScraperProcess = null;
-    if (code === 0) {
-      scraperStatus = 'completed';
-      scraperLogs.push(`\n[${new Date().toISOString()}] Scraper cycle COMPLETED successfully.\n`);
-      // Force cache reload on next request
-      dbCache.data = [];
-      dbCache.lastUpdated = null;
-    } else {
-      scraperStatus = 'failed';
-      scraperLogs.push(`\n[${new Date().toISOString()}] Scraper cycle FAILED with exit code ${code}.\n`);
+// 5. POST /api/scrapers/run - Queue Playwright scraping in BullMQ
+router.post('/scrapers/run', async (req, res) => {
+  try {
+    const activeJobs = await scraperQueue.getActive();
+    const waitingJobs = await scraperQueue.getWaiting();
+    
+    if (activeJobs.length > 0 || waitingJobs.length > 0) {
+      const currentJob = activeJobs[0] || waitingJobs[0];
+      const logsObj = await scraperQueue.getJobLogs(currentJob.id, 0, 1000);
+      return res.status(400).json({
+        status: 'running',
+        message: 'A scraper job is already running or waiting.',
+        jobId: currentJob.id,
+        logs: logsObj ? logsObj.logs : []
+      });
     }
-    console.log(`[Scraper] Process closed with exit code ${code}`);
-  });
 
-  res.json({
-    status: 'running',
-    message: 'Scraper running in background.',
-    logs: scraperLogs
-  });
+    const job = await scraperQueue.add('run-scraper', {}, {
+      attempts: 1,
+      removeOnComplete: false,
+      removeOnFail: false
+    });
+    
+    await redisClient.set('scraper:last_job_id', job.id);
+    
+    res.json({
+      status: 'running',
+      message: 'Scraper run queued successfully.',
+      jobId: job.id,
+      logs: [`[${new Date().toISOString()}] Scraper run queued (Job ID: ${job.id}).\n`]
+    });
+  } catch (error) {
+    console.error('Error queueing scraper:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
 });
 
-// Check status of scraper run
-router.get('/scrapers/status', (req, res) => {
-  res.json({
-    status: scraperStatus,
-    logs: scraperLogs
-  });
+// 6. GET /api/scrapers/status - Check status of scraper run (with BullMQ)
+router.get('/scrapers/status', async (req, res) => {
+  try {
+    const jobId = req.query.jobId || (await redisClient.get('scraper:last_job_id'));
+    if (!jobId) {
+      return res.json({ status: 'idle', logs: ['No scraper runs recorded yet.'] });
+    }
+    
+    const job = await scraperQueue.getJob(jobId);
+    if (!job) {
+      return res.json({ status: 'idle', logs: ['Scraper job not found.'] });
+    }
+    
+    const state = await job.getState();
+    const logsObj = await scraperQueue.getJobLogs(jobId, 0, 1000);
+    const logs = logsObj ? logsObj.logs : [];
+    
+    let status = 'idle';
+    if (state === 'active' || state === 'waiting' || state === 'delayed') {
+      status = 'running';
+    } else if (state === 'completed') {
+      status = 'completed';
+    } else if (state === 'failed') {
+      status = 'failed';
+    }
+    
+    res.json({
+      status,
+      logs,
+      jobId
+    });
+  } catch (error) {
+    console.error('Error fetching scraper status:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+// Additional Queue routes for manual/worker cleanups and liveness runs
+router.post('/scrapers/cleanup', async (req, res) => {
+  try {
+    const job = await cleanupQueue.add('run-cleanup', {});
+    res.json({ message: 'Cleanup job queued.', jobId: job.id });
+  } catch (error) {
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+router.post('/scrapers/liveness', async (req, res) => {
+  try {
+    const job = await livenessQueue.add('run-liveness', {});
+    res.json({ message: 'Liveness check job queued.', jobId: job.id });
+  } catch (error) {
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+// Health Checks
+router.get('/live', (req, res) => {
+  res.json({ status: 'UP', service: 'liveness', timestamp: new Date().toISOString() });
+});
+
+router.get('/ready', async (req, res) => {
+  try {
+    const connection = await pool.getConnection();
+    connection.release();
+    res.json({ status: 'UP', service: 'readiness', timestamp: new Date().toISOString() });
+  } catch (error) {
+    res.status(503).json({ status: 'DOWN', error: error.message });
+  }
+});
+
+router.get('/health', async (req, res) => {
+  const health = {
+    status: 'UP',
+    timestamp: new Date().toISOString(),
+    services: {
+      db: { status: 'UP' },
+      redis: { status: 'UP' }
+    }
+  };
+
+  try {
+    const connection = await pool.getConnection();
+    connection.release();
+  } catch (error) {
+    health.status = 'DOWN';
+    health.services.db = { status: 'DOWN', error: error.message };
+  }
+
+  try {
+    const pingRes = await redisClient.ping();
+    if (pingRes !== 'PONG') {
+      throw new Error(`Ping failed with response: ${pingRes}`);
+    }
+  } catch (error) {
+    health.status = 'DOWN';
+    health.services.redis = { status: 'DOWN', error: error.message };
+  }
+
+  if (health.status === 'DOWN') {
+    res.status(503).json(health);
+  } else {
+    res.json(health);
+  }
 });
 
 export default router;

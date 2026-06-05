@@ -147,17 +147,19 @@ def validate_url(apply_link: str, source: str, check_liveness: bool = True) -> t
             # Some sites block GET but page exists; accept with caution
             return True, f"URL returned {resp.status_code} (access-restricted but exists)", html_content
         elif resp.status_code == 404:
-            return False, "URL returned 404 - dead link", ""
+            return False, "[404] URL returned 404 - dead link", ""
+        elif resp.status_code in [500, 502, 503, 504]:
+            return False, f"[5XX] URL returned server error {resp.status_code}", html_content
         else:
-            return False, f"URL returned unexpected status {resp.status_code}", ""
+            return False, f"[STATUS_{resp.status_code}] URL returned unexpected status {resp.status_code}", ""
     except requests.exceptions.TooManyRedirects:
-        return False, "URL has a redirect loop", ""
+        return False, "[REDIRECT_LOOP] URL has a redirect loop", ""
     except requests.exceptions.ConnectionError:
-        return False, "URL connection failed — host unreachable", ""
+        return False, "[CONNECTION] URL connection failed — host unreachable", ""
     except requests.exceptions.Timeout:
-        return False, "URL timed out", ""
+        return False, "[TIMEOUT] URL timed out", ""
     except Exception as e:
-        return False, f"URL check error: {e}", ""
+        return False, f"[ERROR] URL check error: {e}", ""
 
 
 # ─────────────────────────────────────────────────────────────────────

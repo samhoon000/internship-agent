@@ -40,23 +40,46 @@ class WellfoundScraper(BaseScraper):
                 
         await page.route("**/*", block_resources)
 
-        try:
-            logger.info(f"[Wellfound] Navigating to {url}...")
-            await page.goto(url, timeout=PLAYWRIGHT_TIMEOUT)
-            await page.wait_for_load_state("networkidle")
-            
-            await asyncio.sleep(random.uniform(1.0, 2.5))
-            
-            # Detect Cloudflare or DataDome CAPTCHA blocking
-            title = await page.title()
-            html = await page.content()
-            if (any(term in title for term in ["Cloudflare", "Just a moment", "Please verify", "Attention Required"]) or
-                "captcha-delivery.com" in html or "datadome" in html.lower() or "captcha" in html.lower()):
-                logger.error(f"[Wellfound] Blocked by Cloudflare/DataDome challenge. Title: '{title}'")
-                await self.save_debug_artifacts(page, "wellfound_blocked")
-                self.blocked = True
-                return []
+        max_retries = 3
+        nav_success = False
+        
+        for attempt in range(1, max_retries + 1):
+            try:
+                logger.info(f"[Wellfound] Navigation attempt {attempt}/{max_retries} to {url}...")
+                response = await page.goto(url, timeout=PLAYWRIGHT_TIMEOUT)
+                await page.wait_for_load_state("domcontentloaded")
+                await asyncio.sleep(random.uniform(2.0, 4.0))
                 
+                # Detect Cloudflare or DataDome CAPTCHA blocking
+                title = await page.title()
+                html = await page.content()
+                if (any(term in title for term in ["Cloudflare", "Just a moment", "Please verify", "Attention Required"]) or
+                    "captcha-delivery.com" in html or "datadome" in html.lower() or "captcha" in html.lower()):
+                    logger.warning(f"[Wellfound] Attempt {attempt} blocked by Cloudflare/DataDome challenge. Title: '{title}'")
+                    await self.save_debug_artifacts(page, f"wellfound_blocked_attempt_{attempt}")
+                    
+                    # Exponential delay before retry, trying to wait out transient triggers
+                    sleep_delay = attempt * 5.0
+                    logger.info(f"[Wellfound] Sleeping for {sleep_delay}s before retrying...")
+                    await asyncio.sleep(sleep_delay)
+                    continue
+                
+                # If we got a non-200 status code
+                if response and response.status != 200:
+                    logger.warning(f"[Wellfound] Navigation returned non-200 status code: {response.status}")
+                    
+                nav_success = True
+                break
+            except Exception as e:
+                logger.warning(f"[Wellfound] Navigation attempt {attempt} failed with exception: {e}")
+                await asyncio.sleep(3.0)
+
+        if not nav_success:
+            logger.error("[Wellfound] All navigation attempts failed or were blocked by Cloudflare.")
+            self.blocked = True
+            return []
+
+        try:
             logger.info("[Wellfound] Simulating scroll loading...")
             for _ in range(3):
                 scroll_distance = random.randint(300, 600)

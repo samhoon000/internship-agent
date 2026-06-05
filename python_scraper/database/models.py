@@ -27,6 +27,11 @@ class Internship(Base):
     freshness_score = Column(Integer, default=0, nullable=False, index=True)
     confidence = Column(String(50), default="HIGH", nullable=False, index=True)
     confidence_tier = Column(String(50), default="HIGH_CONFIDENCE", nullable=False, index=True)
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
+    inactive_reason = Column(String(255), nullable=True)
+    last_seen = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    deactivated_at = Column(DateTime, nullable=True, index=True)
+    consecutive_failures = Column(Integer, default=0, nullable=False, index=True)
     description = Column(String(5000), nullable=True)  # Stored text description
     relevance_score = Column(Integer, default=0, nullable=False, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
@@ -53,6 +58,12 @@ class Internship(Base):
             "confidence": self.confidence,
             "confidence_tier": self.confidence_tier,
             "description": self.description,
-            "relevance_score": self.relevance_score
+            "relevance_score": self.relevance_score,
+            "is_active": self.is_active,
+            "inactive_reason": self.inactive_reason,
+            "last_seen": self.last_seen.strftime("%Y-%m-%d %H:%M:%S") if self.last_seen else None,
+            "deactivated_at": self.deactivated_at.strftime("%Y-%m-%d %H:%M:%S") if self.deactivated_at else None,
+            "consecutive_failures": self.consecutive_failures
         }
+
 

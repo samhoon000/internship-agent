@@ -31,6 +31,20 @@ async def run_agent_cycle():
     start_time = time.time()
     logger.info("=== Starting AI Internship Discovery Cycle ===")
     
+    # Run database cleanup and liveness validation before scraping starts
+    from python_scraper.database.db import get_db_session
+    from python_scraper.database.cleanup_service import cleanup_old_internships, remove_dead_links_async
+    
+    logger.info("Executing pre-cycle database expiration and archival cleanup...")
+    session = get_db_session()
+    try:
+        cleanup_old_internships(session)
+        await remove_dead_links_async(session)
+    except Exception as cleanup_err:
+        logger.error(f"Failed to execute database cleanup cycle: {cleanup_err}", exc_info=True)
+    finally:
+        session.close()
+        
     from playwright.async_api import async_playwright
     from python_scraper.config import USER_AGENTS, PLAYWRIGHT_VIEWPORT
     import random
@@ -45,9 +59,17 @@ async def run_agent_cycle():
     
     all_scraped_items = []
     
+    from python_scraper.config import PLAYWRIGHT_HEADLESS
     async with async_playwright() as p:
-        logger.info("Launching headless Chromium browser instance...")
-        browser = await p.chromium.launch(headless=True)
+        logger.info(f"Launching Chromium browser instance (headless={PLAYWRIGHT_HEADLESS})...")
+        browser = await p.chromium.launch(
+            headless=PLAYWRIGHT_HEADLESS,
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+                "--disable-infobars"
+            ]
+        )
         browser_context = await browser.new_context(
             user_agent=random.choice(USER_AGENTS),
             viewport=PLAYWRIGHT_VIEWPORT,
@@ -85,6 +107,16 @@ async def run_agent_cycle():
     # Save to database
     stats = {}
     added, updated, skipped = save_internships(validated_items, stats_dict=stats)
+    
+    # Refresh freshness scores for active listings
+    from run import refresh_stats
+    session = get_db_session()
+    try:
+        refresh_stats(session)
+    except Exception as stats_err:
+        logger.error(f"Failed to refresh freshness scores: {stats_err}")
+    finally:
+        session.close()
     
     # Calculate detailed metrics per scraper
     ishala_scraper = next((s for s in scrapers if s.source_name == "Internshala"), None)

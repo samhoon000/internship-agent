@@ -134,7 +134,15 @@ class IndeedScraper(BaseScraper):
                         stipend = salary_el.text.strip()
                         
                     skills = []
-                    desc_el = card.select_one('.job-snippet') or card.select_one('[class*="job-snippet"]') or card.select_one('#jobDescriptionText')
+                    # In newer indeed markup, description snippet (.slider_sub_item) is a sibling of the card (.job_seen_beacon) under the cardOutline container
+                    container = card.find_parent(class_=re.compile("cardOutline|result")) or card.parent or card
+                    desc_el = (
+                        container.select_one('.job-snippet') or 
+                        container.select_one('[class*="job-snippet"]') or
+                        container.select_one('.slider_sub_item') or
+                        container.select_one('[class*="slider_sub_item"]') or
+                        container.select_one('#jobDescriptionText')
+                    )
                     if desc_el:
                         desc_text = desc_el.text.lower()
                         from python_scraper.config import BOOST_SKILLS

@@ -61,54 +61,6 @@ def init_db():
             
         Base.metadata.create_all(engine)
         logger.info("Database startup sequence: SUCCESSFUL. Table 'internships' created or verified successfully.")
-
-        # Verify and add posted_at and freshness_score columns dynamically if they do not exist
-        try:
-            with engine.connect() as conn:
-                from sqlalchemy import text
-                columns_query = conn.execute(text("SHOW COLUMNS FROM internships"))
-                existing_cols = [row[0] for row in columns_query.fetchall()]
-                
-                if "posted_at" not in existing_cols:
-                    logger.info("[Migration] Adding 'posted_at' column to 'internships' table...")
-                    conn.execute(text("ALTER TABLE internships ADD COLUMN posted_at DATETIME DEFAULT NULL"))
-                    logger.info("[Migration] Column 'posted_at' added successfully.")
-                
-                if "freshness_score" not in existing_cols:
-                    logger.info("[Migration] Adding 'freshness_score' column to 'internships' table...")
-                    conn.execute(text("ALTER TABLE internships ADD COLUMN freshness_score INT DEFAULT 0"))
-                    logger.info("[Migration] Column 'freshness_score' added successfully.")
-                
-                if "confidence" not in existing_cols:
-                    logger.info("[Migration] Adding 'confidence' column to 'internships' table...")
-                    conn.execute(text("ALTER TABLE internships ADD COLUMN confidence VARCHAR(50) DEFAULT 'HIGH' NOT NULL"))
-                    logger.info("[Migration] Column 'confidence' added successfully.")
-                
-                if "confidence_score" not in existing_cols:
-                    logger.info("[Migration] Adding 'confidence_score' column to 'internships' table...")
-                    conn.execute(text("ALTER TABLE internships ADD COLUMN confidence_score INT DEFAULT 0 NOT NULL"))
-                    conn.execute(text("UPDATE internships SET confidence_score = legitimacy_score"))
-                    logger.info("[Migration] Column 'confidence_score' added successfully.")
-                
-                if "confidence_tier" not in existing_cols:
-                    logger.info("[Migration] Adding 'confidence_tier' column to 'internships' table...")
-                    conn.execute(text("ALTER TABLE internships ADD COLUMN confidence_tier VARCHAR(50) DEFAULT 'HIGH_CONFIDENCE' NOT NULL"))
-                    conn.execute(text("UPDATE internships SET confidence_tier = confidence"))
-                    logger.info("[Migration] Column 'confidence_tier' added successfully.")
-
-                if "description" not in existing_cols:
-                    logger.info("[Migration] Adding 'description' column to 'internships' table...")
-                    conn.execute(text("ALTER TABLE internships ADD COLUMN description TEXT DEFAULT NULL"))
-                    logger.info("[Migration] Column 'description' added successfully.")
-
-                if "relevance_score" not in existing_cols:
-                    logger.info("[Migration] Adding 'relevance_score' column to 'internships' table...")
-                    conn.execute(text("ALTER TABLE internships ADD COLUMN relevance_score INT DEFAULT 0 NOT NULL"))
-                    logger.info("[Migration] Column 'relevance_score' added successfully.")
-                
-                conn.commit()
-        except Exception as migration_error:
-            logger.warning(f"Database startup sequence: Auto-migration of columns failed: {migration_error}")
     except Exception as e:
         logger.critical(f"Database startup sequence: FAILED. Error initializing tables: {e}", exc_info=True)
         raise e
@@ -276,6 +228,16 @@ def save_internships(internship_dicts, stats_dict=None):
                 existing_record = existing_jobs[matched_link]
                 changed = False
 
+                # Soft delete reactivation!
+                if not getattr(existing_record, 'is_active', True):
+                    existing_record.is_active = True
+                    existing_record.deactivated_at = None
+                    existing_record.inactive_reason = None
+                    existing_record.consecutive_failures = 0
+                    changed = True
+
+                existing_record.last_seen = datetime.utcnow()
+
                 if item.get('stipend') and existing_record.stipend != item.get('stipend'):
                     existing_record.stipend = item.get('stipend')
                     existing_record.stipend_numeric = stipend_numeric
@@ -303,11 +265,13 @@ def save_internships(internship_dicts, stats_dict=None):
 
                 existing_record.freshness_score = freshness
 
+                # Even if no fields changed, we updated last_seen, so we mark session dirty
                 if changed:
                     updated_count += 1
                     if stats_dict is not None:
                         stats_dict[source]['updated'] += 1
                 else:
+                    # Increment skipped_count but session still updates last_seen
                     skipped_count += 1
                     if stats_dict is not None:
                         stats_dict[source]['skipped'] += 1
@@ -334,7 +298,12 @@ def save_internships(internship_dicts, stats_dict=None):
                 "description": item.get('description'),
                 "relevance_score": item.get('relevance_score', 0),
                 "posted_at": posted_at,
-                "created_at": datetime.utcnow()
+                "created_at": datetime.utcnow(),
+                "is_active": True,
+                "inactive_reason": None,
+                "last_seen": datetime.utcnow(),
+                "deactivated_at": None,
+                "consecutive_failures": 0
             }
             to_insert.append(new_record)
             
