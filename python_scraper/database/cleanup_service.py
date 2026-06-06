@@ -37,6 +37,15 @@ def cleanup_old_internships(session) -> tuple[int, int]:
     
     try:
         # 1. Soft-delete Active listings that become Inactive (21-30 days old)
+        # Only soft-deactivate if the corresponding source has been successfully scraped in the last 7 days
+        from python_scraper.database.models import SourceHealth
+        cutoff_health = now - timedelta(days=7)
+        healthy_sources = {
+            h.source for h in session.query(SourceHealth).filter(
+                SourceHealth.last_successful_scrape >= cutoff_health
+            ).all()
+        }
+
         inactive_listings = session.query(Internship).filter(
             Internship.is_active == True,
             (
@@ -46,10 +55,14 @@ def cleanup_old_internships(session) -> tuple[int, int]:
         ).all()
         
         for job in inactive_listings:
-            job.is_active = False
-            job.inactive_reason = "Inactive (Stale)"
-            job.deactivated_at = now
-            soft_deleted += 1
+            if job.source in healthy_sources:
+                job.is_active = False
+                job.inactive_reason = "Inactive (Stale)"
+                job.deactivated_at = now
+                soft_deleted += 1
+            else:
+                logger.info(f"Skipping soft-deactivation of stale listing '{job.company_name} - {job.role}' "
+                            f"because its source '{job.source}' has not been successfully scraped recently.")
 
         # 2. Archive Inactive listings that become Archived (30-90 days old)
         archived_listings = session.query(Internship).filter(

@@ -37,9 +37,9 @@ logger = logging.getLogger("python_scraper.validators")
 
 REJECTION_REASONS_COUNTER = Counter()
 
-def log_rejection(company: str, role: str, score: int, reasons: list[str]):
+def log_rejection(company: str, role: str, score: int, reasons: list[str], source: str = "Unknown", relevance_score: int = 0):
     """
-    Logs a rejected internship in JSON format to a file and updates the rejection reasons counter.
+    Logs a rejected internship to the MySQL database and updates the rejection reasons counter.
     """
     simplified_reasons = []
     for r in reasons:
@@ -64,24 +64,30 @@ def log_rejection(company: str, role: str, score: int, reasons: list[str]):
     for sr in simplified_reasons:
         REJECTION_REASONS_COUNTER[sr] += 1
 
-    log_entry = {
-        "company": company or "Unknown Company",
-        "role": role or "Unknown Role",
-        "score": score,
-        "accepted": False,
-        "reasons": reasons
-    }
+    from python_scraper.database.db import get_db_session
+    from python_scraper.database.models import InternshipRejection
 
-    rejections_file = Path(__file__).resolve().parent.parent / "rejections.jsonl"
+    reasons_str = ", ".join(reasons)
+    session = get_db_session()
     try:
-        # Create directories if they do not exist (defensive design)
-        rejections_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(rejections_file, "a", encoding="utf-8") as f:
-            f.write(json.dumps(log_entry) + "\n")
-    except Exception as e:
-        logger.error(f"Failed to write rejection log entry: {e}")
+        rejection_record = InternshipRejection(
+            company_name=company or "Unknown Company",
+            role=role or "Unknown Role",
+            source=source or "Unknown",
+            reasons=reasons_str[:480],
+            relevance_score=relevance_score or 0,
+            legitimacy_score=score or 0,
+            confidence_score=score or 0
+        )
+        session.add(rejection_record)
+        session.commit()
+    except Exception as db_err:
+        session.rollback()
+        logger.error(f"Failed to write rejection database entry: {db_err}")
+    finally:
+        session.close()
 
-    logger.info(f"[REJECTION LOG] {json.dumps(log_entry)}")
+    logger.info(f"[REJECTION LOG] {company or 'Unknown Company'} - {role or 'Unknown Role'} rejected. Reasons: {reasons_str}")
 
 
 
@@ -431,158 +437,5 @@ def run_validation_pipeline(item: dict, check_liveness: bool = True) -> tuple[bo
     return True, notes
 
 
-def get_relevance_tier_and_category(title: str, skills: str, description: str, company_domain: str = None, source: str = None) -> tuple[int, str, str]:
-    """
-    Calculates unified relevance score, tier, and role category.
-    Returns (score, tier, category).
-    """
-    if not title:
-        return 0, "IRRELEVANT", "Other"
-        
-    title_lower = title.lower()
-    skills_lower = (skills or "").lower()
-    desc_lower = (description or "").lower()
-    domain_lower = (company_domain or "").lower()
-    source_lower = (source or "").lower()
-    
-    # Normalize title
-    norm_title = re.sub(r'[-/_+:,()\[\]\s]+', ' ', title_lower)
-    norm_title = ' '.join(norm_title.split())
-
-    # 1. Penalties & Exclusions (Hard Excludes)
-    penalties = [
-        "sales", "marketing", "hr", "telecalling", "customer support", "customer care",
-        "equity dealer", "back office", "social media", "content writing", "telecaller",
-        "human resources", "business development", "bde", "bda", "recruiter", "recruiting",
-        "talent acquisition"
-    ]
-    
-    has_penalty = False
-    for p in penalties:
-        pattern = rf"\b{re.escape(p)}\b"
-        if re.search(pattern, title_lower) or re.search(pattern, norm_title):
-            has_penalty = True
-            break
-            
-    if has_penalty:
-        return 0, "IRRELEVANT", "Other"
-
-    # 2. Determine Category
-    data_ai_keywords = [
-        "data science", "data scientist", "data analyst", "data analytics", "business analyst", 
-        "business intelligence", "machine learning", "artificial intelligence", "deep learning", 
-        "sql", "research analyst", "data engineer", "ml engineer", "ai engineer", "analytics", 
-        "bi analyst", "bi developer", "mis analyst", "quantitative research", "research engineer",
-        "nlp", "computer vision", "statistics", "data wrangler", "insights analyst", "analytics engineer"
-    ]
-    
-    software_keywords = [
-        "software engineer", "software engineering", "full stack", "fullstack", "backend", 
-        "product engineer", "product engineering", "software developer", "frontend", "front end", 
-        "web developer", "web development", "react", "node", "flutter", "java developer", 
-        "android", "ios"
-    ]
-
-    is_data_ai = any(kw in norm_title for kw in data_ai_keywords)
-    is_software = any(kw in norm_title for kw in software_keywords)
-
-    category = "Other"
-    if is_data_ai:
-        category = "Data/AI"
-    elif is_software:
-        category = "Software"
-    else:
-        # Fallback to skills/description if title is ambiguous
-        has_data_skills = any(sk in skills_lower or sk in desc_lower for sk in ["python", "sql", "pandas", "tableau", "power bi", "machine learning", "data science"])
-        has_sw_skills = any(sk in skills_lower or sk in desc_lower for sk in ["javascript", "react", "node", "html", "css", "java", "c++", "flutter"])
-        if has_data_skills:
-            category = "Data/AI"
-        elif has_sw_skills:
-            category = "Software"
-
-    if category == "Other":
-        return 20, "IRRELEVANT", "Other"
-
-    # 3. Calculate Score
-    score = 30  # Base score for matching category
-    
-    # Title Match (Max 55 points)
-    if category == "Data/AI":
-        boosted = [
-            "data science", "data scientist", "data analyst", "data analytics", "business analyst", 
-            "business intelligence", "machine learning", "artificial intelligence", "deep learning", 
-            "sql", "research analyst", "data engineer", "ml engineer", "ai engineer"
-        ]
-        if any(b in norm_title for b in boosted):
-            score += 55
-        else:
-            score += 40
-    elif category == "Software":
-        if any(s in norm_title for s in ["software engineer", "software engineering", "full stack", "fullstack", "backend", "product engineer", "product engineering"]):
-            score += 55
-        else:
-            score += 40
-
-    # Skills Match (Max 20 points)
-    skills_score = 0
-    if category == "Data/AI":
-        core_skills = ["python", "sql", "excel", "power bi", "tableau", "pandas", "numpy", "machine learning", "data science", "statistics", "r", "spark", "databricks", "database", "etl", "bigquery", "analytics"]
-    else:
-        core_skills = ["javascript", "react", "node", "html", "css", "java", "c++", "flutter", "android", "ios", "git", "typescript"]
-        
-    skills_list = [s.strip() for s in skills_lower.split(",") if s.strip()]
-    matched_skills = set()
-    for s in skills_list:
-        for cs in core_skills:
-            if cs in s:
-                matched_skills.add(cs)
-    skills_score = min(20, len(matched_skills) * 5)
-    score += skills_score
-
-    # Description Match (Max 15 points)
-    desc_score = 0
-    if desc_lower:
-        matched_desc = set()
-        for cs in core_skills:
-            if cs in desc_lower:
-                matched_desc.add(cs)
-        desc_score = min(15, len(matched_desc) * 3)
-    score += desc_score
-
-    # Company Domain Match (Max 5 points)
-    if domain_lower:
-        job_boards = ["internshala.com", "indeed.com", "indeed.co.in", "in.indeed.com", "wellfound.com", "workatastartup.com", "linkedin.com"]
-        if not any(jb in domain_lower for jb in job_boards):
-            score += 5
-
-    # Source Match (Max 5 points)
-    if source_lower:
-        if "wellfound" in source_lower or "yc" in source_lower or "workatastartup" in source_lower:
-            score += 5
-        else:
-            score += 2
-
-    # Clamp score
-    score = min(100, max(0, score))
-
-    # Determine Tier
-    if score >= 80:
-        tier = "HIGHLY_RELEVANT"
-    elif score >= 60:
-        tier = "RELEVANT"
-    elif score >= 40:
-        tier = "MARGINALLY_RELEVANT"
-    else:
-        tier = "IRRELEVANT"
-
-    return score, tier, category
-
-
-def calculate_relevance_score(title: str, skills: str, description: str, company_domain: str = None, source: str = None) -> int:
-    """
-    Calculates role relevance score based on title, skills, and description.
-    Returns an integer from 0 to 100.
-    """
-    score, _, _ = get_relevance_tier_and_category(title, skills, description, company_domain, source)
-    return score
+from python_scraper.scoring.scoring_service import get_relevance_tier_and_category, calculate_relevance_score
 

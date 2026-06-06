@@ -113,7 +113,7 @@ async def validate_new_items_liveness(items) -> list[dict]:
             if not is_live:
                 logger.warning(f"[Liveness Gate] Rejecting new link for {item.get('company_name')} - {item.get('role')}: {reason}")
                 from python_scraper.utils.validators import log_rejection
-                log_rejection(item.get('company_name'), item.get('role'), item.get('legitimacy_score', 0), [f"Dead Link: {reason}"])
+                log_rejection(item.get('company_name'), item.get('role'), item.get('legitimacy_score', 0), [f"Dead Link: {reason}"], source=item.get('source', 'Unknown'), relevance_score=item.get('relevance_score', 0))
                 return None
             
             # Extract and store clean description
@@ -127,7 +127,7 @@ async def validate_new_items_liveness(items) -> list[dict]:
             item['description'] = description[:4900]
             
             # Calculate unified relevance score
-            from python_scraper.utils.validators import get_relevance_tier_and_category
+            from python_scraper.scoring.scoring_service import get_relevance_tier_and_category
             relevance, relevance_tier, role_category = get_relevance_tier_and_category(
                 item.get("role"), item.get("skills"), description, domain, source
             )
@@ -139,7 +139,7 @@ async def validate_new_items_liveness(items) -> list[dict]:
             if relevance < 40:
                 logger.warning(f"[Relevance Gate] Rejecting role: '{item.get('role')}' at '{item.get('company_name')}' (Relevance score {relevance} < 40)")
                 from python_scraper.utils.validators import log_rejection
-                log_rejection(item.get('company_name'), item.get('role'), item.get('legitimacy_score', 0), [f"Low Relevance Score ({relevance} < 40)"])
+                log_rejection(item.get('company_name'), item.get('role'), item.get('legitimacy_score', 0), [f"Low Relevance Score ({relevance} < 40)"], source=item.get('source', 'Unknown'), relevance_score=relevance)
                 return None
             
             # If the item needs description-based rescue, promote it
@@ -288,6 +288,13 @@ async def main():
     
     # Save internships runs local O(1) deduplication and bulk inserts
     added, _, skipped = save_internships(validated_items, stats_dict=stats)
+    
+    # Update source health in database
+    from python_scraper.database.db import update_source_health
+    for s in scrapers:
+        # Check if successfully scraped (scraped_count > 0 and not blocked)
+        success = (s.scraped_count > 0 and not getattr(s, 'blocked', False))
+        update_source_health(s.source_name, success)
     
     # 7. STEP 7 - Refresh Stats
     refresh_stats(session)

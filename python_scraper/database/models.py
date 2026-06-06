@@ -71,3 +71,47 @@ class Internship(Base):
         }
 
 
+class InternshipRejection(Base):
+    __tablename__ = 'internship_rejections'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    company_name = Column(String(255), nullable=False)
+    role = Column(String(255), nullable=False)
+    source = Column(String(100), nullable=False, index=True)
+    reasons = Column(String(500), nullable=False)  # Stored as comma-separated reasons
+    relevance_score = Column(Integer, default=0, nullable=False)
+    legitimacy_score = Column(Integer, default=0, nullable=False)
+    confidence_score = Column(Integer, default=0, nullable=False)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "created_at": self.created_at.strftime("%Y-%m-%d %H:%M:%S") if self.created_at else None,
+            "company_name": self.company_name,
+            "role": self.role,
+            "source": self.source,
+            "reasons": self.reasons,
+            "relevance_score": self.relevance_score,
+            "legitimacy_score": self.legitimacy_score,
+            "confidence_score": self.confidence_score
+        }
+
+
+class SourceHealth(Base):
+    __tablename__ = 'source_health'
+    
+    source = Column(String(100), primary_key=True, nullable=False)
+    last_successful_scrape = Column(DateTime, nullable=True)
+    last_failure = Column(DateTime, nullable=True)
+    health_status = Column(String(50), default="UNKNOWN", nullable=False)
+
+    def to_dict(self):
+        return {
+            "source": self.source,
+            "last_successful_scrape": self.last_successful_scrape.strftime("%Y-%m-%d %H:%M:%S") if self.last_successful_scrape else None,
+            "last_failure": self.last_failure.strftime("%Y-%m-%d %H:%M:%S") if self.last_failure else None,
+            "health_status": self.health_status
+        }
+
+

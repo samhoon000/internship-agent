@@ -4,16 +4,32 @@ import morgan from 'morgan';
 import dotenv from 'dotenv';
 import apiRouter from './routes.js';
 
+import helmet from 'helmet';
+
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Enable CORS for frontend Vite dev server (usually localhost:5173) and any origin
+app.use(helmet());
+
+// Enable CORS for frontend Vite dev server
+const allowedOrigins = [
+  process.env.FRONTEND_URL || 'http://localhost:5173',
+  'http://localhost:5173'
+];
+
 app.use(cors({
-  origin: '*',
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.indexOf(origin) === -1) {
+      const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
+      return callback(new Error(msg), false);
+    }
+    return callback(null, true);
+  },
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Admin-API-Key']
 }));
 
 app.use(express.json());

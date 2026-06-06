@@ -6,7 +6,6 @@ import { fetchInternships } from '../api';
 import InternshipCard from '../components/InternshipCard';
 
 // Static filter checklists defined outside component to prevent re-creation on every render
-const standardSkills = ['Python', 'SQL', 'Power BI', 'Excel', 'Tableau', 'Machine Learning', 'Statistics', 'Pandas', 'Data Visualization'];
 const locationsList = ['Bangalore', 'Mumbai', 'Delhi', 'Hyderabad', 'Pune', 'Chennai'];
 const sourcesList = ['Internshala', 'LinkedIn', 'Wellfound', 'Indeed', 'Company Website'];
 const durationsList = [
@@ -260,7 +259,7 @@ export default function ExplorePage() {
   // Fetch listings from backend
   const { data: listingsData, isLoading, isError, refetch } = useQuery({
     queryKey: ['internships', queryParams],
-    queryFn: () => fetchInternships(queryParams),
+    queryFn: ({ signal }) => fetchInternships(queryParams, signal),
     placeholderData: (prev) => prev
   });
 

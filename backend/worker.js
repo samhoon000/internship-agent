@@ -102,6 +102,35 @@ const livenessWorker = new Worker('liveness-queue', async (job) => {
   console.log(`[Worker] Completed liveness-queue job: ${job.id}`);
 }, { connection });
 
+// Helper to clear Redis caches on scraper writes
+const clearCache = async () => {
+  try {
+    const keys = await connection.keys('filters:*');
+    if (keys.length > 0) {
+      await connection.del(keys);
+    }
+    await connection.del('stats');
+    console.log('[Worker Cache Clear] Successfully cleared stats and filters cache.');
+  } catch (err) {
+    console.error('[Worker Cache Clear Error]', err);
+  }
+};
+
+scraperWorker.on('completed', async (job) => {
+  console.log(`[Worker] Scraper job ${job.id} completed.`);
+  await clearCache();
+});
+
+cleanupWorker.on('completed', async (job) => {
+  console.log(`[Worker] Cleanup job ${job.id} completed.`);
+  await clearCache();
+});
+
+livenessWorker.on('completed', async (job) => {
+  console.log(`[Worker] Liveness job ${job.id} completed.`);
+  await clearCache();
+});
+
 scraperWorker.on('failed', (job, err) => {
   console.error(`[Worker] Scraper job ${job.id} failed:`, err);
 });

@@ -1,13 +1,13 @@
 import { useQuery } from '@tanstack/react-query';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area } from 'recharts';
-import { ShieldAlert, BarChart2, ShieldCheck, Database, Calendar, Layers, Filter } from 'lucide-react';
+import { ShieldAlert, BarChart2, ShieldCheck, Database, Calendar, Layers } from 'lucide-react';
 import { fetchAnalytics } from '../api';
 
 export default function AnalyticsPage() {
   // Query data from express /api/stats
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['analyticsStats'],
-    queryFn: fetchAnalytics
+    queryFn: ({ signal }) => fetchAnalytics(signal)
   });
 
   const charts = data?.charts;

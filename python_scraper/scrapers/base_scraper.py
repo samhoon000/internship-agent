@@ -11,7 +11,7 @@ from python_scraper.config import (
 )
 from python_scraper.utils.filters import clean_internship
 from python_scraper.utils.validators import run_validation_pipeline
-from python_scraper.scoring.legitimacy import calculate_legitimacy_score
+from python_scraper.scoring.scoring_service import calculate_legitimacy_score, get_legitimacy_bucket
 
 logger = logging.getLogger("python_scraper.scrapers.base")
 
@@ -106,9 +106,30 @@ class BaseScraper(ABC):
                 local_context = await local_browser.new_context()
                 browser_context = local_context
 
-            raw_results = await self.scrape_live(browser_context)
+            import asyncio
+            max_attempts = 3
+            base_delay = 2.0
+            backoff_factor = 2.0
+            
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    logger.info(f"[{self.source_name}] Scraping attempt {attempt} of {max_attempts}...")
+                    raw_results = await self.scrape_live(browser_context)
+                    if raw_results:
+                        logger.info(f"[{self.source_name}] Scraping successful on attempt {attempt}. Retrieved {len(raw_results)} items.")
+                        break
+                    else:
+                        logger.warning(f"[{self.source_name}] Attempt {attempt} returned 0 results.")
+                except Exception as attempt_err:
+                    logger.error(f"[{self.source_name}] Attempt {attempt} failed with error: {attempt_err}")
+                
+                if attempt < max_attempts:
+                    sleep_time = base_delay * (backoff_factor ** (attempt - 1)) + random.uniform(0.1, 1.0)
+                    logger.info(f"[{self.source_name}] Retrying in {sleep_time:.2f}s...")
+                    await asyncio.sleep(sleep_time)
+
         except Exception as e:
-            logger.error(f"[{self.source_name}] Critical error during live scraping: {e}", exc_info=True)
+            logger.error(f"[{self.source_name}] Critical error during scraping lifecycle: {e}", exc_info=True)
         finally:
             if local_context:
                 try:
@@ -132,7 +153,7 @@ class BaseScraper(ABC):
             return []
 
         from python_scraper.utils.validators import log_rejection
-        from python_scraper.scoring.legitimacy import get_legitimacy_bucket
+        from python_scraper.scoring.scoring_service import get_legitimacy_bucket
 
         processed_results = []
         self.scraped_count = len(raw_results)
@@ -157,7 +178,7 @@ class BaseScraper(ABC):
                         self.unpaid_or_cert += 1
                     elif "[URL]" in reason:
                         self.broken_urls += 1
-                log_rejection(cleaned.get('company_name'), cleaned.get('role'), 0, validation_reasons)
+                log_rejection(cleaned.get('company_name'), cleaned.get('role'), 0, validation_reasons, source=cleaned.get('source', 'Unknown'))
                 continue
                 
             # 3. Apply legitimacy scoring engine
@@ -172,7 +193,7 @@ class BaseScraper(ABC):
             if cleaned.get('confidence') != 'NEEDS_RESCUE' and score < MIN_LEGITIMACY_TO_KEEP:
                 logger.warning(f"[{self.source_name}] Internship at '{cleaned.get('company_name')}' rejected: score {score} is below required {MIN_LEGITIMACY_TO_KEEP}")
                 self.score_below_threshold += 1
-                log_rejection(cleaned.get('company_name'), cleaned.get('role'), score, [f"Legitimacy Score Below Threshold ({score} < {MIN_LEGITIMACY_TO_KEEP})"])
+                log_rejection(cleaned.get('company_name'), cleaned.get('role'), score, [f"Legitimacy Score Below Threshold ({score} < {MIN_LEGITIMACY_TO_KEEP})"], source=cleaned.get('source', 'Unknown'))
                 continue
                 
             processed_results.append(cleaned)

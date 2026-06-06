@@ -32,7 +32,7 @@ export default function DetailsPage() {
   // Fetch internship details by decoded applyLink
   const { data, isLoading, isError } = useQuery({
     queryKey: ['internshipDetails', applyLink],
-    queryFn: () => fetchInternshipDetails(decodeURIComponent(applyLink || '')),
+    queryFn: ({ signal }) => fetchInternshipDetails(decodeURIComponent(applyLink || ''), signal),
     enabled: !!applyLink
   });
 

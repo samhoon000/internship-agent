@@ -20,7 +20,8 @@ const redisPort = process.env.REDIS_PORT || 6379;
 const redisConfig = {
   host: redisHost,
   port: redisPort,
-  maxRetriesPerRequest: null // Required by BullMQ
+  maxRetriesPerRequest: null, // Required by BullMQ
+  enableOfflineQueue: false // Fail fast and degrade gracefully if Redis is down
 };
 
 const redisClient = new Redis(redisConfig);
@@ -43,6 +44,24 @@ const apiLimiter = rateLimit({
 });
 
 router.use(apiLimiter);
+
+// Middleware: Verify Admin API Key
+const verifyAdminKey = (req, res, next) => {
+  const apiKey = req.headers['x-admin-api-key'] || req.query.apiKey;
+  const expectedKey = process.env.ADMIN_API_KEY || 'super-secret-admin-key';
+  if (!apiKey || apiKey !== expectedKey) {
+    return res.status(401).json({ error: 'Unauthorized: Invalid or missing X-Admin-API-Key' });
+  }
+  next();
+};
+
+// Middleware: Verify Redis Connection Liveness
+const checkRedisConnection = (req, res, next) => {
+  if (redisClient.status !== 'ready') {
+    return res.status(503).json({ error: 'Service Unavailable: Redis queue server is offline' });
+  }
+  next();
+};
 
 // Helper: Parse stipend string to numeric value (used for match score calc in JS)
 function parseStipend(stipendStr) {
@@ -139,9 +158,8 @@ function buildInternshipsQuery(query) {
 
   // Search filter
   if (search.trim()) {
-    const q = `%${search.trim()}%`;
-    sql += ` AND (company_name LIKE ? OR role LIKE ? OR skills LIKE ? OR location LIKE ?)`;
-    params.push(q, q, q, q);
+    sql += ` AND MATCH(company_name, role, skills, description) AGAINST(? IN NATURAL LANGUAGE MODE)`;
+    params.push(search.trim());
   }
 
   // Location filter
@@ -194,12 +212,14 @@ function buildInternshipsQuery(query) {
     }
   }
 
-  // Skills filter (matches ALL selected skills)
+  // Skills filter (matches ALL selected skills exactly)
   if (skills) {
     const selectedSkills = skills.split(',').map(s => s.trim().toLowerCase());
     selectedSkills.forEach(skill => {
-      sql += ` AND skills LIKE ?`;
-      params.push(`%${skill}%`);
+      // Remove spaces for exact token comparison in comma-separated list
+      const cleanSkill = skill.replace(/\s+/g, '');
+      sql += ` AND FIND_IN_SET(?, REPLACE(LOWER(skills), ' ', '')) > 0`;
+      params.push(cleanSkill);
     });
   }
 
@@ -270,22 +290,44 @@ router.get('/internships', async (req, res) => {
       sort = 'newest'
     } = req.query;
 
-    const pageNum = parseInt(page, 10) || 1;
-    const limitNum = parseInt(limit, 10) || 10;
+    // Parameter validation and sanitization
+    const pageNum = Math.max(1, parseInt(page, 10) || 1);
+    const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 10));
     const offset = (pageNum - 1) * limitNum;
+
+    if (req.query.search) {
+      req.query.search = req.query.search.trim().replace(/[^\w\s\-\,\.\+\#]/gi, '');
+    }
+    if (req.query.location) {
+      req.query.location = req.query.location.trim().replace(/[^\w\s\-\,]/gi, '');
+    }
+    if (req.query.skills) {
+      req.query.skills = req.query.skills.trim().replace(/[^\w\s\-\,\+\#]/gi, '');
+    }
 
     const { sql: whereSql, params: whereParams } = buildInternshipsQuery(req.query);
 
-    const columns = [
+    const baseColumns = [
       'apply_link', 'company_name', 'role', 'stipend', 'stipend_numeric', 'paid',
       'location', 'remote', 'duration', 'skills', 'source', 'legitimacy_score',
       'confidence_score', 'freshness_score', 'confidence', 'confidence_tier',
       'relevance_score', 'posted_at', 'created_at'
-    ].join(', ');
+    ];
+
+    let selectColumns = [...baseColumns];
+    let selectParams = [];
+    const hasSearch = req.query.search && req.query.search.trim();
+
+    if (hasSearch) {
+      selectColumns.push(`MATCH(company_name, role, skills, description) AGAINST(? IN NATURAL LANGUAGE MODE) AS search_score`);
+      selectParams.push(req.query.search.trim());
+    }
+
+    const columnsStr = selectColumns.join(', ');
 
     if (sort === 'legitimacy') {
-      const querySql = `SELECT ${columns} ${whereSql}`;
-      const [rows] = await pool.query(querySql, whereParams);
+      const querySql = `SELECT ${columnsStr} ${whereSql}`;
+      const [rows] = await pool.query(querySql, [...selectParams, ...whereParams]);
 
       const processed = rows.map(row => {
         const skills_list = row.skills ? row.skills.split(',').map(s => s.trim()).filter(Boolean) : [];
@@ -319,11 +361,15 @@ router.get('/internships', async (req, res) => {
       } else if (sort === 'recently_added') {
         orderClause = ` ORDER BY created_at DESC`;
       } else {
-        orderClause = ` ORDER BY COALESCE(posted_at, created_at) DESC`;
+        if (hasSearch) {
+          orderClause = ` ORDER BY search_score DESC, COALESCE(posted_at, created_at) DESC`;
+        } else {
+          orderClause = ` ORDER BY COALESCE(posted_at, created_at) DESC`;
+        }
       }
 
-      const querySql = `SELECT ${columns} ${whereSql}${orderClause} LIMIT ? OFFSET ?`;
-      const queryParams = [...whereParams, limitNum, offset];
+      const querySql = `SELECT ${columnsStr} ${whereSql}${orderClause} LIMIT ? OFFSET ?`;
+      const queryParams = [...selectParams, ...whereParams, limitNum, offset];
 
       const [rows] = await pool.query(querySql, queryParams);
 
@@ -443,6 +489,17 @@ router.get('/internships/:applyLink', async (req, res) => {
 router.get('/filters', async (req, res) => {
   try {
     const { category = 'Data/AI' } = req.query;
+    const cacheKey = `filters:${category}`;
+
+    try {
+      const cachedData = await redisClient.get(cacheKey);
+      if (cachedData) {
+        return res.json(JSON.parse(cachedData));
+      }
+    } catch (cacheErr) {
+      console.error('[Redis Cache Read Error - filters]', cacheErr);
+    }
+
     const [rows] = await pool.query(
       'SELECT location, source, skills FROM internships WHERE is_active = 1 AND relevance_score >= 40 AND role_category = ?',
       [category]
@@ -489,11 +546,19 @@ router.get('/filters', async (req, res) => {
       })
       .sort((a, b) => b.count - a.count);
 
-    res.json({
+    const resultData = {
       locations: Array.from(locationsSet).sort(),
       sources: Array.from(sourcesSet).sort(),
       skills: popularSkills
-    });
+    };
+
+    try {
+      await redisClient.setex(cacheKey, 600, JSON.stringify(resultData));
+    } catch (cacheErr) {
+      console.error('[Redis Cache Write Error - filters]', cacheErr);
+    }
+
+    res.json(resultData);
   } catch (error) {
     console.error('Error fetching filter values:', error);
     res.status(500).json({ error: 'Internal Server Error' });
@@ -503,6 +568,16 @@ router.get('/filters', async (req, res) => {
 // 4. GET /api/stats - Analytics (excludes description, active only)
 router.get('/stats', async (req, res) => {
   try {
+    const cacheKey = 'stats';
+    try {
+      const cachedData = await redisClient.get(cacheKey);
+      if (cachedData) {
+        return res.json(JSON.parse(cachedData));
+      }
+    } catch (cacheErr) {
+      console.error('[Redis Cache Read Error - stats]', cacheErr);
+    }
+
     const [rows] = await pool.query(
       'SELECT company_name, role, role_category, stipend, stipend_numeric, remote, location, source, skills, legitimacy_score, posted_at, created_at FROM internships WHERE is_active = 1'
     );
@@ -515,36 +590,15 @@ router.get('/stats', async (req, res) => {
     
     const [[{ dbTotalCount }]] = await pool.query('SELECT COUNT(*) as dbTotalCount FROM internships');
     
-    // Parse rejection logs
-    const rejectionsFilePath = path.resolve(ROOT_DIR, 'python_scraper', 'rejections.jsonl');
-    let totalRejected = 0;
-    let rejectedNonTech = 0;
-    
-    if (fs.existsSync(rejectionsFilePath)) {
-      const fileStream = fs.createReadStream(rejectionsFilePath);
-      const rl = readline.createInterface({
-        input: fileStream,
-        crlfDelay: Infinity
-      });
-      for await (const line of rl) {
-        if (!line.trim()) continue;
-        totalRejected++;
-        try {
-          const data = JSON.parse(line);
-          const reasons = data.reasons || [];
-          const isNonTech = reasons.some(r => 
-            r.toLowerCase().includes('relevance') || 
-            r.toLowerCase().includes('role') ||
-            r.toLowerCase().includes('exclude')
-          );
-          if (isNonTech) {
-            rejectedNonTech++;
-          }
-        } catch (e) {
-          // ignore
-        }
-      }
-    }
+    // Query rejection stats from database
+    const [[rejectionRow]] = await pool.query(
+      `SELECT 
+         COUNT(*) as totalRejected,
+         SUM(CASE WHEN reasons LIKE '%relevance%' OR reasons LIKE '%role%' OR reasons LIKE '%exclude%' THEN 1 ELSE 0 END) as rejectedNonTech 
+       FROM internship_rejections`
+    );
+    const totalRejected = rejectionRow ? (rejectionRow.totalRejected || 0) : 0;
+    const rejectedNonTech = rejectionRow ? (Number(rejectionRow.rejectedNonTech) || 0) : 0;
 
     const aiDataCount = rows.filter(i => i.role_category === 'Data/AI').length;
     const softwareCount = rows.filter(i => i.role_category === 'Software').length;
@@ -652,7 +706,7 @@ router.get('/stats', async (req, res) => {
       avgStipend: Math.round(data.sum / data.count)
     })).sort((a, b) => b.avgStipend - a.avgStipend);
 
-    res.json({
+    const resultData = {
       metrics: {
         totalScraped: dbTotalCount + totalRejected,
         highlyLegit,
@@ -670,7 +724,15 @@ router.get('/stats', async (req, res) => {
         locationDistribution,
         avgStipendTrend
       }
-    });
+    };
+
+    try {
+      await redisClient.setex(cacheKey, 600, JSON.stringify(resultData));
+    } catch (cacheErr) {
+      console.error('[Redis Cache Write Error - stats]', cacheErr);
+    }
+
+    res.json(resultData);
   } catch (error) {
     console.error('Error fetching statistics:', error);
     res.status(500).json({ error: 'Internal Server Error' });
@@ -678,7 +740,7 @@ router.get('/stats', async (req, res) => {
 });
 
 // 5. POST /api/scrapers/run - Queue Playwright scraping in BullMQ
-router.post('/scrapers/run', async (req, res) => {
+router.post('/scrapers/run', verifyAdminKey, checkRedisConnection, async (req, res) => {
   try {
     const activeJobs = await scraperQueue.getActive();
     const waitingJobs = await scraperQueue.getWaiting();
@@ -715,7 +777,7 @@ router.post('/scrapers/run', async (req, res) => {
 });
 
 // 6. GET /api/scrapers/status - Check status of scraper run (with BullMQ)
-router.get('/scrapers/status', async (req, res) => {
+router.get('/scrapers/status', checkRedisConnection, async (req, res) => {
   try {
     const jobId = req.query.jobId || (await redisClient.get('scraper:last_job_id'));
     if (!jobId) {
@@ -752,7 +814,7 @@ router.get('/scrapers/status', async (req, res) => {
 });
 
 // Additional Queue routes for manual/worker cleanups and liveness runs
-router.post('/scrapers/cleanup', async (req, res) => {
+router.post('/scrapers/cleanup', verifyAdminKey, checkRedisConnection, async (req, res) => {
   try {
     const job = await cleanupQueue.add('run-cleanup', {});
     res.json({ message: 'Cleanup job queued.', jobId: job.id });
@@ -761,7 +823,7 @@ router.post('/scrapers/cleanup', async (req, res) => {
   }
 });
 
-router.post('/scrapers/liveness', async (req, res) => {
+router.post('/scrapers/liveness', verifyAdminKey, checkRedisConnection, async (req, res) => {
   try {
     const job = await livenessQueue.add('run-liveness', {});
     res.json({ message: 'Liveness check job queued.', jobId: job.id });

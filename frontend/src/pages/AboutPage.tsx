@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { Play, Terminal, Info, Cpu, AlertTriangle } from 'lucide-react';
 import { runScraper, fetchScraperStatus } from '../api';
+import type { ScraperStatusResponse } from '../api';
 
 export default function AboutPage() {
   const [logs, setLogs] = useState<string[]>([]);
@@ -9,9 +10,9 @@ export default function AboutPage() {
   const logTerminalRef = useRef<HTMLDivElement>(null);
 
   // Poll scraper status every 2.5 seconds if it's currently running
-  const { data: statusData, refetch: refetchStatus } = useQuery({
+  const { data: statusData, refetch: refetchStatus } = useQuery<ScraperStatusResponse>({
     queryKey: ['scraperStatus'],
-    queryFn: fetchScraperStatus,
+    queryFn: ({ signal }) => fetchScraperStatus(signal),
     refetchInterval: (query) => {
       const currentStatus = query.state.data?.status;
       return currentStatus === 'running' ? 2500 : false;

@@ -67,7 +67,7 @@ export interface ScraperStatusResponse {
 
 const API_BASE_URL = 'http://localhost:5000/api';
 
-export async function fetchInternships(params: Record<string, any>): Promise<InternshipResponse> {
+export async function fetchInternships(params: Record<string, any>, signal?: AbortSignal): Promise<InternshipResponse> {
   const queryParams = new URLSearchParams();
   Object.entries(params).forEach(([key, val]) => {
     if (val !== undefined && val !== null && val !== '') {
@@ -75,27 +75,28 @@ export async function fetchInternships(params: Record<string, any>): Promise<Int
     }
   });
   
-  const res = await fetch(`${API_BASE_URL}/internships?${queryParams.toString()}`);
+  const res = await fetch(`${API_BASE_URL}/internships?${queryParams.toString()}`, { signal });
   if (!res.ok) throw new Error('Failed to fetch internships');
   return res.json();
 }
 
-export async function fetchInternshipDetails(applyLink: string): Promise<{ internship: Internship; similar: Internship[] }> {
+export async function fetchInternshipDetails(applyLink: string, signal?: AbortSignal): Promise<{ internship: Internship; similar: Internship[] }> {
   // Base64 encode the applyLink for the URL parameter
   const base64Link = btoa(unescape(encodeURIComponent(applyLink)));
-  const res = await fetch(`${API_BASE_URL}/internships/${base64Link}`);
+  const res = await fetch(`${API_BASE_URL}/internships/${base64Link}`, { signal });
   if (!res.ok) throw new Error('Failed to fetch internship details');
   return res.json();
 }
 
-export async function fetchFilters(): Promise<FilterResponse> {
-  const res = await fetch(`${API_BASE_URL}/filters`);
+export async function fetchFilters(category?: string, signal?: AbortSignal): Promise<FilterResponse> {
+  const url = category ? `${API_BASE_URL}/filters?category=${encodeURIComponent(category)}` : `${API_BASE_URL}/filters`;
+  const res = await fetch(url, { signal });
   if (!res.ok) throw new Error('Failed to fetch filters');
   return res.json();
 }
 
-export async function fetchAnalytics(): Promise<AnalyticsResponse> {
-  const res = await fetch(`${API_BASE_URL}/stats`);
+export async function fetchAnalytics(signal?: AbortSignal): Promise<AnalyticsResponse> {
+  const res = await fetch(`${API_BASE_URL}/stats`, { signal });
   if (!res.ok) throw new Error('Failed to fetch analytics');
   return res.json();
 }
@@ -109,8 +110,8 @@ export async function runScraper(): Promise<{ status: string; message: string; l
   return res.json();
 }
 
-export async function fetchScraperStatus(): Promise<ScraperStatusResponse> {
-  const res = await fetch(`${API_BASE_URL}/scrapers/status`);
+export async function fetchScraperStatus(signal?: AbortSignal): Promise<ScraperStatusResponse> {
+  const res = await fetch(`${API_BASE_URL}/scrapers/status`, { signal });
   if (!res.ok) throw new Error('Failed to fetch scraper status');
   return res.json();
 }

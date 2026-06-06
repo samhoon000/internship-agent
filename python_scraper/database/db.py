@@ -61,21 +61,7 @@ def init_db():
             raise ConnectionError("Could not connect to MySQL at localhost:3306")
             
         Base.metadata.create_all(engine)
-        
-        # Check and add missing columns dynamically
-        from sqlalchemy import inspect, text
-        inspector = inspect(engine)
-        existing_cols = [col['name'] for col in inspector.get_columns('internships')]
-        
-        with engine.begin() as conn:
-            if 'relevance_tier' not in existing_cols:
-                logger.info("Adding relevance_tier column to internships table...")
-                conn.execute(text("ALTER TABLE internships ADD COLUMN relevance_tier VARCHAR(50) DEFAULT 'IRRELEVANT' NOT NULL"))
-                conn.execute(text("CREATE INDEX ix_internships_relevance_tier ON internships (relevance_tier)"))
-            if 'role_category' not in existing_cols:
-                logger.info("Adding role_category column to internships table...")
-                conn.execute(text("ALTER TABLE internships ADD COLUMN role_category VARCHAR(50) DEFAULT 'Other' NOT NULL"))
-                conn.execute(text("CREATE INDEX ix_internships_role_category ON internships (role_category)"))
+        logger.info("Tables created or verified via SQLAlchemy Metadata.")
                 
         # Perform dynamic backfill of existing rows
         SessionLocal = sessionmaker(bind=engine)
@@ -154,18 +140,7 @@ def save_internships(internship_dicts, stats_dict=None):
     rejected_low_confidence = 0
     rejected_malformed = 0
 
-    def get_canonical_key(comp: str, role_title: str) -> str:
-        # Normalize company name (remove common suffixes and non-alphanumeric)
-        c = (comp or "").lower()
-        c = re.sub(r"\b(pvt|private|ltd|limited|inc|llc|corp|corporation|co|company)\b", "", c)
-        c = re.sub(r"[^a-z0-9]", "", c).strip()
-        
-        # Normalize role title (remove words like 'internship', 'intern', 'co-op', and extra whitespace)
-        r = (role_title or "").lower()
-        r = re.sub(r"\b(internship|intern|co-op|coop|temporary|part-time|full-time)\b", "", r)
-        r = re.sub(r"[^a-z0-9]", "", r).strip()
-        
-        return f"{c}||{r}"
+    from python_scraper.utils.deduplication import get_canonical_key, is_duplicate_fuzzy
 
     def normalize_url(url_str: str) -> str:
         if not url_str:
@@ -197,7 +172,7 @@ def save_internships(internship_dicts, stats_dict=None):
         to_insert = []
         
         from python_scraper.utils.validators import log_rejection
-        from python_scraper.scoring.legitimacy import get_legitimacy_bucket
+        from python_scraper.scoring.scoring_service import get_legitimacy_bucket
 
         for item in internship_dicts:
             apply_link = item.get('apply_link')
@@ -218,7 +193,7 @@ def save_internships(internship_dicts, stats_dict=None):
                 if not apply_link: reasons.append("Missing Critical Fields (apply_link)")
                 if not company_name: reasons.append("Missing Critical Fields (company_name)")
                 if not role: reasons.append("Missing Critical Fields (role)")
-                log_rejection(company_name or "Unknown Company", role or "Unknown Role", 0, reasons)
+                log_rejection(company_name or "Unknown Company", role or "Unknown Role", 0, reasons, source=source, relevance_score=relevance_score)
                 continue
 
             # Fallback calculation if relevance properties are missing from item
@@ -227,7 +202,7 @@ def save_internships(internship_dicts, stats_dict=None):
             relevance_score = item.get('relevance_score')
             
             if not role_category or not relevance_tier or relevance_score is None:
-                from python_scraper.utils.validators import get_relevance_tier_and_category
+                from python_scraper.scoring.scoring_service import get_relevance_tier_and_category
                 domain = ""
                 if apply_link:
                     try:
@@ -253,7 +228,7 @@ def save_internships(internship_dicts, stats_dict=None):
             if score < MIN_LEGITIMACY_TO_KEEP:
                 logger.warning(f"[SQL Insert Safety] Rejected low confidence internship ({company_name} - {role}): score {score} < {MIN_LEGITIMACY_TO_KEEP}")
                 rejected_low_confidence += 1
-                log_rejection(company_name, role, score, [f"Legitimacy Score Below Threshold ({score} < {MIN_LEGITIMACY_TO_KEEP})"])
+                log_rejection(company_name, role, score, [f"Legitimacy Score Below Threshold ({score} < {MIN_LEGITIMACY_TO_KEEP})"], source=source, relevance_score=relevance_score)
                 continue
 
             # Map the confidence to 4-tier class
@@ -272,6 +247,14 @@ def save_internships(internship_dicts, stats_dict=None):
                 matched_link = existing_combos_map[normalized_input_link]
             elif ckey in existing_combos_map:
                 matched_link = existing_combos_map[ckey]
+            else:
+                # Perform fuzzy matching on existing keys in memory
+                for ext_key, link in existing_combos_map.items():
+                    if '||' in ext_key:
+                        ext_comp, ext_role = ext_key.split('||', 1)
+                        if is_duplicate_fuzzy(company_name, role, ext_comp, ext_role):
+                            matched_link = link
+                            break
 
             # Prepare fields
             stipend_numeric = parse_stipend_to_numeric(item.get('stipend'))
@@ -413,6 +396,35 @@ def save_internships(internship_dicts, stats_dict=None):
         session.rollback()
         logger.error(f"Error executing database transaction: {e}", exc_info=True)
         return 0, 0, 0
+    finally:
+        session.close()
+        Session.remove()
+
+
+def update_source_health(source_name: str, success: bool):
+    """
+    Updates the health record for a given scraper source in the source_health table.
+    """
+    from python_scraper.database.models import SourceHealth
+    session = get_db_session()
+    try:
+        health = session.query(SourceHealth).filter(SourceHealth.source == source_name).first()
+        if not health:
+            health = SourceHealth(source=source_name)
+            session.add(health)
+            
+        if success:
+            health.last_successful_scrape = datetime.utcnow()
+            health.health_status = "HEALTHY"
+        else:
+            health.last_failure = datetime.utcnow()
+            health.health_status = "UNHEALTHY"
+            
+        session.commit()
+        logger.info(f"[Source Health] Updated {source_name} health: {health.health_status}")
+    except Exception as e:
+        session.rollback()
+        logger.error(f"Failed to update source health for {source_name}: {e}")
     finally:
         session.close()
         Session.remove()
