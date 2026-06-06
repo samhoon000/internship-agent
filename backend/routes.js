@@ -5,6 +5,8 @@ import rateLimit from 'express-rate-limit';
 import sanitizeHtml from 'sanitize-html';
 import Redis from 'ioredis';
 import { Queue } from 'bullmq';
+import fs from 'fs';
+import readline from 'readline';
 import pool from './db.js';
 
 const router = express.Router();
@@ -112,9 +114,6 @@ function getMatchScore(row, query = {}) {
 
 // SQL Query Builder helper
 function buildInternshipsQuery(query) {
-  let sql = `FROM internships WHERE is_active = 1 AND relevance_score >= 40`;
-  let params = [];
-
   const {
     search = '',
     location = '',
@@ -126,8 +125,17 @@ function buildInternshipsQuery(query) {
     source = '',
     legitimacyMin = '45',
     datePosted = '',
-    confidence = ''
+    confidence = '',
+    category = 'Data/AI'
   } = query;
+
+  let sql = `FROM internships WHERE is_active = 1 AND relevance_score >= 40`;
+  let params = [];
+
+  if (category) {
+    sql += ` AND role_category = ?`;
+    params.push(category);
+  }
 
   // Search filter
   if (search.trim()) {
@@ -398,9 +406,10 @@ router.get('/internships/:applyLink', async (req, res) => {
              relevance_score, posted_at, created_at
       FROM internships
       WHERE is_active = 1 AND apply_link != ? AND relevance_score >= 40
+        AND role_category = ?
         AND (role LIKE ? OR source = ?
     `;
-    const similarParams = [decodedLink, firstRoleWord, row.source];
+    const similarParams = [decodedLink, row.role_category || 'Data/AI', firstRoleWord, row.source];
 
     if (skillsMatchPatterns.length > 0) {
       const skillsClauses = skillsMatchPatterns.map(() => 'skills LIKE ?').join(' OR ');
@@ -433,8 +442,10 @@ router.get('/internships/:applyLink', async (req, res) => {
 // 3. GET /api/filters - Unique values for filters (excludes description, active only)
 router.get('/filters', async (req, res) => {
   try {
+    const { category = 'Data/AI' } = req.query;
     const [rows] = await pool.query(
-      'SELECT location, source, skills FROM internships WHERE is_active = 1 AND relevance_score >= 40'
+      'SELECT location, source, skills FROM internships WHERE is_active = 1 AND relevance_score >= 40 AND role_category = ?',
+      [category]
     );
     
     const locationsSet = new Set();
@@ -493,7 +504,7 @@ router.get('/filters', async (req, res) => {
 router.get('/stats', async (req, res) => {
   try {
     const [rows] = await pool.query(
-      'SELECT company_name, role, stipend, stipend_numeric, remote, location, source, skills, legitimacy_score, posted_at, created_at FROM internships WHERE is_active = 1'
+      'SELECT company_name, role, role_category, stipend, stipend_numeric, remote, location, source, skills, legitimacy_score, posted_at, created_at FROM internships WHERE is_active = 1'
     );
     
     const totalCount = rows.length;
@@ -502,6 +513,42 @@ router.get('/stats', async (req, res) => {
       ? rows.reduce((sum, i) => sum + i.legitimacy_score, 0) / totalCount 
       : 0;
     
+    const [[{ dbTotalCount }]] = await pool.query('SELECT COUNT(*) as dbTotalCount FROM internships');
+    
+    // Parse rejection logs
+    const rejectionsFilePath = path.resolve(ROOT_DIR, 'python_scraper', 'rejections.jsonl');
+    let totalRejected = 0;
+    let rejectedNonTech = 0;
+    
+    if (fs.existsSync(rejectionsFilePath)) {
+      const fileStream = fs.createReadStream(rejectionsFilePath);
+      const rl = readline.createInterface({
+        input: fileStream,
+        crlfDelay: Infinity
+      });
+      for await (const line of rl) {
+        if (!line.trim()) continue;
+        totalRejected++;
+        try {
+          const data = JSON.parse(line);
+          const reasons = data.reasons || [];
+          const isNonTech = reasons.some(r => 
+            r.toLowerCase().includes('relevance') || 
+            r.toLowerCase().includes('role') ||
+            r.toLowerCase().includes('exclude')
+          );
+          if (isNonTech) {
+            rejectedNonTech++;
+          }
+        } catch (e) {
+          // ignore
+        }
+      }
+    }
+
+    const aiDataCount = rows.filter(i => i.role_category === 'Data/AI').length;
+    const softwareCount = rows.filter(i => i.role_category === 'Software').length;
+
     const skillsCount = {};
     rows.forEach(i => {
       if (i.skills) {
@@ -607,9 +654,12 @@ router.get('/stats', async (req, res) => {
 
     res.json({
       metrics: {
-        totalScraped: totalCount,
+        totalScraped: dbTotalCount + totalRejected,
         highlyLegit,
-        avgLegitimacy: parseFloat(avgLegitimacy.toFixed(1))
+        avgLegitimacy: parseFloat(avgLegitimacy.toFixed(1)),
+        aiDataCount,
+        softwareCount,
+        rejectedNonTech
       },
       charts: {
         skillsDemand,

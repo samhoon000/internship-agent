@@ -34,6 +34,8 @@ class Internship(Base):
     consecutive_failures = Column(Integer, default=0, nullable=False, index=True)
     description = Column(String(5000), nullable=True)  # Stored text description
     relevance_score = Column(Integer, default=0, nullable=False, index=True)
+    relevance_tier = Column(String(50), default="IRRELEVANT", nullable=False, index=True)
+    role_category = Column(String(50), default="Other", nullable=False, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
     def to_dict(self):
@@ -59,6 +61,8 @@ class Internship(Base):
             "confidence_tier": self.confidence_tier,
             "description": self.description,
             "relevance_score": self.relevance_score,
+            "relevance_tier": self.relevance_tier,
+            "role_category": self.role_category,
             "is_active": self.is_active,
             "inactive_reason": self.inactive_reason,
             "last_seen": self.last_seen.strftime("%Y-%m-%d %H:%M:%S") if self.last_seen else None,

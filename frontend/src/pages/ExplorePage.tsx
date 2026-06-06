@@ -62,6 +62,14 @@ export default function ExplorePage() {
   const datePosted = searchParams.get('datePosted') || '';
   const sort = searchParams.get('sort') || 'newest';
   const page = searchParams.get('page') || '1';
+  const category = searchParams.get('category') || 'Data/AI';
+
+  const dynamicSkillsList = useMemo(() => {
+    if (category === 'Software') {
+      return ['JavaScript', 'TypeScript', 'React', 'Node.js', 'HTML/CSS', 'Java', 'C++', 'Python', 'Flutter', 'Git'];
+    }
+    return ['Python', 'SQL', 'Power BI', 'Excel', 'Tableau', 'Machine Learning', 'Statistics', 'Pandas', 'Data Visualization'];
+  }, [category]);
 
   // Debounce state
   const [localSearch, setLocalSearch] = useState(search);
@@ -184,7 +192,7 @@ export default function ExplorePage() {
     // Simulate smart matching extraction
     setTimeout(() => {
       const text = resumeText.toLowerCase();
-      const matched = standardSkills.filter(skill => {
+      const matched = dynamicSkillsList.filter(skill => {
         const sLower = skill.toLowerCase();
         const regex = new RegExp(`\\b${sLower}\\b`, 'i');
         return regex.test(text) || text.includes(sLower);
@@ -245,7 +253,8 @@ export default function ExplorePage() {
     sort,
     datePosted,
     page,
-    limit: '8'
+    limit: '8',
+    category
   };
 
   // Fetch listings from backend
@@ -690,7 +699,7 @@ export default function ExplorePage() {
           <div className="space-y-3 border-t border-slate-100 pt-4">
             <h4 className="font-bold text-[10px] uppercase tracking-wider text-slate-400 font-sans">Core Skills</h4>
             <div className="flex flex-wrap gap-1.5">
-              {standardSkills.map((skill) => {
+              {dynamicSkillsList.map((skill) => {
                 const sLower = skill.toLowerCase();
                 const isSelected = selectedSkills.includes(sLower);
                 return (
@@ -791,6 +800,30 @@ export default function ExplorePage() {
 
         {/* Right Listings Board */}
         <div className="md:col-span-3 space-y-4">
+          
+          {/* Category Tabs */}
+          <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200/60 shadow-inner">
+            <button
+              onClick={() => updateQueryParams({ category: 'Data/AI', page: '1' })}
+              className={`flex-1 py-2 text-center text-xs font-bold rounded-lg transition-all duration-200 cursor-pointer ${
+                category === 'Data/AI'
+                  ? 'bg-white text-slate-900 shadow-sm border border-slate-200/40 font-extrabold'
+                  : 'text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              📊 Data Science & AI
+            </button>
+            <button
+              onClick={() => updateQueryParams({ category: 'Software', page: '1' })}
+              className={`flex-1 py-2 text-center text-xs font-bold rounded-lg transition-all duration-200 cursor-pointer ${
+                category === 'Software'
+                  ? 'bg-white text-slate-900 shadow-sm border border-slate-200/40 font-extrabold'
+                  : 'text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              💻 Software Engineering
+            </button>
+          </div>
           
           {/* Results count summary */}
           <div className="flex items-center justify-between text-xs text-slate-550 px-1">
@@ -1130,7 +1163,7 @@ export default function ExplorePage() {
             <div className="space-y-2 border-t border-slate-100 pt-3">
               <h4 className="font-bold text-[10px] uppercase tracking-wider text-slate-400 font-sans">Core Skills</h4>
               <div className="flex flex-wrap gap-1">
-                {standardSkills.map((skill) => {
+                {dynamicSkillsList.map((skill) => {
                   const sLower = skill.toLowerCase();
                   const isSelected = selectedSkills.includes(sLower);
                   return (

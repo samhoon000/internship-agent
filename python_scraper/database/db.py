@@ -53,6 +53,7 @@ def init_db():
     """
     Initializes the local MySQL database and tables automatically on startup.
     Handles errors for connection issues or table creation failures.
+    Automatically migrates missing relevance columns and backfills existing data.
     """
     try:
         logger.info("Initiating database startup sequence...")
@@ -60,7 +61,57 @@ def init_db():
             raise ConnectionError("Could not connect to MySQL at localhost:3306")
             
         Base.metadata.create_all(engine)
-        logger.info("Database startup sequence: SUCCESSFUL. Table 'internships' created or verified successfully.")
+        
+        # Check and add missing columns dynamically
+        from sqlalchemy import inspect, text
+        inspector = inspect(engine)
+        existing_cols = [col['name'] for col in inspector.get_columns('internships')]
+        
+        with engine.begin() as conn:
+            if 'relevance_tier' not in existing_cols:
+                logger.info("Adding relevance_tier column to internships table...")
+                conn.execute(text("ALTER TABLE internships ADD COLUMN relevance_tier VARCHAR(50) DEFAULT 'IRRELEVANT' NOT NULL"))
+                conn.execute(text("CREATE INDEX ix_internships_relevance_tier ON internships (relevance_tier)"))
+            if 'role_category' not in existing_cols:
+                logger.info("Adding role_category column to internships table...")
+                conn.execute(text("ALTER TABLE internships ADD COLUMN role_category VARCHAR(50) DEFAULT 'Other' NOT NULL"))
+                conn.execute(text("CREATE INDEX ix_internships_role_category ON internships (role_category)"))
+                
+        # Perform dynamic backfill of existing rows
+        SessionLocal = sessionmaker(bind=engine)
+        session = SessionLocal()
+        try:
+            from python_scraper.utils.validators import get_relevance_tier_and_category
+            unclassified = session.query(Internship).filter(
+                (Internship.role_category == 'Other') | (Internship.role_category == None) | (Internship.relevance_tier == 'IRRELEVANT') | (Internship.relevance_tier == None)
+            ).all()
+            if unclassified:
+                logger.info(f"Backfilling relevance score, tier, and category for {len(unclassified)} existing internships...")
+                for job in unclassified:
+                    # Extract domain candidates
+                    domain = ""
+                    if job.apply_link:
+                        try:
+                            from urllib.parse import urlparse
+                            domain = urlparse(job.apply_link).netloc.lower()
+                        except:
+                            pass
+                    
+                    score, tier, cat = get_relevance_tier_and_category(
+                        job.role, job.skills or "", job.description or "", domain, job.source
+                    )
+                    job.relevance_score = score
+                    job.relevance_tier = tier
+                    job.role_category = cat
+                session.commit()
+                logger.info("Database backfill completed successfully.")
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error executing database backfill: {e}")
+        finally:
+            session.close()
+
+        logger.info("Database startup sequence: SUCCESSFUL. Table 'internships' verified and updated.")
     except Exception as e:
         logger.critical(f"Database startup sequence: FAILED. Error initializing tables: {e}", exc_info=True)
         raise e
@@ -170,6 +221,34 @@ def save_internships(internship_dicts, stats_dict=None):
                 log_rejection(company_name or "Unknown Company", role or "Unknown Role", 0, reasons)
                 continue
 
+            # Fallback calculation if relevance properties are missing from item
+            role_category = item.get('role_category')
+            relevance_tier = item.get('relevance_tier')
+            relevance_score = item.get('relevance_score')
+            
+            if not role_category or not relevance_tier or relevance_score is None:
+                from python_scraper.utils.validators import get_relevance_tier_and_category
+                domain = ""
+                if apply_link:
+                    try:
+                        from urllib.parse import urlparse
+                        domain = urlparse(apply_link).netloc.lower()
+                    except:
+                        pass
+                
+                score_calc, tier_calc, cat_calc = get_relevance_tier_and_category(
+                    role, item.get('skills', '') or "", item.get('description', '') or "", domain, source
+                )
+                if relevance_score is None:
+                    relevance_score = score_calc
+                    item['relevance_score'] = score_calc
+                if not relevance_tier:
+                    relevance_tier = tier_calc
+                    item['relevance_tier'] = tier_calc
+                if not role_category:
+                    role_category = cat_calc
+                    item['role_category'] = cat_calc
+
             # Check legitimacy score (safety gate)
             if score < MIN_LEGITIMACY_TO_KEEP:
                 logger.warning(f"[SQL Insert Safety] Rejected low confidence internship ({company_name} - {role}): score {score} < {MIN_LEGITIMACY_TO_KEEP}")
@@ -262,6 +341,12 @@ def save_internships(internship_dicts, stats_dict=None):
                 if item.get('relevance_score', 0) > existing_record.relevance_score:
                     existing_record.relevance_score = item.get('relevance_score', 0)
                     changed = True
+                if item.get('relevance_tier') and existing_record.relevance_tier != item.get('relevance_tier'):
+                    existing_record.relevance_tier = item.get('relevance_tier')
+                    changed = True
+                if item.get('role_category') and existing_record.role_category != item.get('role_category'):
+                    existing_record.role_category = item.get('role_category')
+                    changed = True
 
                 existing_record.freshness_score = freshness
 
@@ -297,6 +382,8 @@ def save_internships(internship_dicts, stats_dict=None):
                 "confidence_tier": confidence_tier or 'HIGH_CONFIDENCE',
                 "description": item.get('description'),
                 "relevance_score": item.get('relevance_score', 0),
+                "relevance_tier": item.get('relevance_tier', 'IRRELEVANT'),
+                "role_category": item.get('role_category', 'Other'),
                 "posted_at": posted_at,
                 "created_at": datetime.utcnow(),
                 "is_active": True,

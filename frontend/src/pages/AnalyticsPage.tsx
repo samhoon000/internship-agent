@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area } from 'recharts';
-import { ShieldAlert, BarChart2, ShieldCheck, Database, Calendar } from 'lucide-react';
+import { ShieldAlert, BarChart2, ShieldCheck, Database, Calendar, Layers, Filter } from 'lucide-react';
 import { fetchAnalytics } from '../api';
 
 export default function AnalyticsPage() {
@@ -27,8 +27,8 @@ export default function AnalyticsPage() {
       <div className="space-y-6 py-6 max-w-5xl mx-auto">
         <div className="h-6 w-32 bg-slate-100 rounded"></div>
         {/* Metric grids */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
-          {[...Array(3)].map((_, i) => (
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+          {[...Array(6)].map((_, i) => (
             <div key={i} className="h-20 rounded-xl bg-white border border-slate-200 shimmer shadow-sm"></div>
           ))}
         </div>
@@ -81,35 +81,65 @@ export default function AnalyticsPage() {
       </div>
 
       {/* Metrics Row (Clean, flat boxes) */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
-        <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex items-center gap-4">
-          <div className="p-2.5 bg-slate-50 text-slate-700 border border-slate-200/60 rounded-lg">
-            <Database className="w-5 h-5 text-primary-600" />
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow">
+          <div className="flex items-center justify-between">
+            <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Total Scraped</p>
+            <div className="p-1.5 bg-slate-50 border border-slate-100 rounded-lg text-slate-600">
+              <Database className="w-3.5 h-3.5" />
+            </div>
           </div>
-          <div>
-            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Total Internships</p>
-            <p className="text-xl font-bold text-slate-900 mt-0.5 leading-none">{metrics?.totalScraped}</p>
-          </div>
+          <p className="text-lg font-extrabold text-slate-900 mt-2 leading-none">{metrics?.totalScraped}</p>
         </div>
 
-        <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex items-center gap-4">
-          <div className="p-2.5 bg-slate-50 text-slate-700 border border-slate-200/60 rounded-lg">
-            <ShieldCheck className="w-5 h-5 text-emerald-600" />
+        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow">
+          <div className="flex items-center justify-between">
+            <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">AI/Data Roles</p>
+            <div className="p-1.5 bg-blue-50 border border-blue-100 rounded-lg text-blue-600">
+              <BarChart2 className="w-3.5 h-3.5" />
+            </div>
           </div>
-          <div>
-            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">High Trust (80+ Score)</p>
-            <p className="text-xl font-bold text-slate-900 mt-0.5 leading-none">{metrics?.highlyLegit}</p>
-          </div>
+          <p className="text-lg font-extrabold text-slate-900 mt-2 leading-none">{metrics?.aiDataCount}</p>
         </div>
 
-        <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex items-center gap-4">
-          <div className="p-2.5 bg-slate-50 text-slate-700 border border-slate-200/60 rounded-lg">
-            <ShieldCheck className="w-5 h-5 text-primary-600" />
+        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow">
+          <div className="flex items-center justify-between">
+            <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Software Roles</p>
+            <div className="p-1.5 bg-purple-50 border border-purple-100 rounded-lg text-purple-600">
+              <Layers className="w-3.5 h-3.5" />
+            </div>
           </div>
-          <div>
-            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Avg Legitimacy Score</p>
-            <p className="text-xl font-bold text-slate-900 mt-0.5 leading-none">{metrics?.avgLegitimacy} / 100</p>
+          <p className="text-lg font-extrabold text-slate-900 mt-2 leading-none">{metrics?.softwareCount}</p>
+        </div>
+
+        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow">
+          <div className="flex items-center justify-between">
+            <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Rejected Non-Tech</p>
+            <div className="p-1.5 bg-rose-50 border border-rose-100 rounded-lg text-rose-600">
+              <ShieldAlert className="w-3.5 h-3.5" />
+            </div>
           </div>
+          <p className="text-lg font-extrabold text-slate-900 mt-2 leading-none">{metrics?.rejectedNonTech}</p>
+        </div>
+
+        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow">
+          <div className="flex items-center justify-between">
+            <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">High Trust (80+)</p>
+            <div className="p-1.5 bg-emerald-50 border border-emerald-100 rounded-lg text-emerald-600">
+              <ShieldCheck className="w-3.5 h-3.5" />
+            </div>
+          </div>
+          <p className="text-lg font-extrabold text-slate-900 mt-2 leading-none">{metrics?.highlyLegit}</p>
+        </div>
+
+        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow">
+          <div className="flex items-center justify-between">
+            <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Avg Legitimacy</p>
+            <div className="p-1.5 bg-amber-50 border border-amber-100 rounded-lg text-amber-600">
+              <ShieldCheck className="w-3.5 h-3.5" />
+            </div>
+          </div>
+          <p className="text-lg font-extrabold text-slate-900 mt-2 leading-none">{metrics?.avgLegitimacy} <span className="text-xs text-slate-400">/100</span></p>
         </div>
       </div>
 

@@ -15,6 +15,9 @@ export interface Internship {
   confidence?: string;
   description?: string | null;
   match_score?: number;
+  relevance_score?: number;
+  relevance_tier?: string;
+  role_category?: string;
   created_at: string;
 }
 
@@ -42,6 +45,9 @@ export interface AnalyticsResponse {
     totalScraped: number;
     highlyLegit: number;
     avgLegitimacy: number;
+    aiDataCount: number;
+    softwareCount: number;
+    rejectedNonTech: number;
   };
   charts: {
     skillsDemand: { name: string; value: number }[];

@@ -127,9 +127,13 @@ async def validate_new_items_liveness(items) -> list[dict]:
             item['description'] = description[:4900]
             
             # Calculate unified relevance score
-            from python_scraper.utils.validators import calculate_relevance_score
-            relevance = calculate_relevance_score(item.get("role"), item.get("skills"), description)
+            from python_scraper.utils.validators import get_relevance_tier_and_category
+            relevance, relevance_tier, role_category = get_relevance_tier_and_category(
+                item.get("role"), item.get("skills"), description, domain, source
+            )
             item['relevance_score'] = relevance
+            item['relevance_tier'] = relevance_tier
+            item['role_category'] = role_category
             
             # Reject if below relevance threshold (40)
             if relevance < 40:
