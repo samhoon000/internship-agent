@@ -13,14 +13,15 @@ from python_scraper.scrapers.wellfound import WellfoundScraper
 from python_scraper.scrapers.yc_jobs import YCJobsScraper
 from python_scraper.scrapers.indeed import IndeedScraper
 
-# Configure robust production logging (stdout + file)
+# Configure robust production logging (stdout + rotating file)
 log_file = Path(__file__).resolve().parent / "python_scraper.log"
+from logging.handlers import RotatingFileHandler
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler(log_file, encoding='utf-8')
+        RotatingFileHandler(log_file, maxBytes=10*1024*1024, backupCount=3, encoding='utf-8')
     ]
 )
 logger = logging.getLogger("python_scraper.app")

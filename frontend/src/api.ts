@@ -115,3 +115,48 @@ export async function fetchScraperStatus(signal?: AbortSignal): Promise<ScraperS
   if (!res.ok) throw new Error('Failed to fetch scraper status');
   return res.json();
 }
+
+export interface HealthResponse {
+  status: 'HEALTHY' | 'UNHEALTHY';
+  timestamp: string;
+  uptimeSeconds: number;
+  services: {
+    db: {
+      status: 'UP' | 'DOWN';
+      latencyMs: number;
+      error?: string;
+    };
+    redis: {
+      status: string;
+    };
+    scrapers: {
+      source: string;
+      lastSuccessfulScrape: string | null;
+      lastFailure: string | null;
+      healthStatus: 'HEALTHY' | 'UNHEALTHY';
+    }[];
+    backup: {
+      status: 'HEALTHY' | 'UNHEALTHY';
+      fileName?: string;
+      sizeBytes?: number;
+      ageHours?: number;
+      lastModified?: string;
+      reason?: string;
+      error?: string;
+    };
+  };
+  alerts: {
+    level: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'WARNING';
+    service: string;
+    message: string;
+  }[];
+}
+
+export async function fetchHealth(signal?: AbortSignal): Promise<HealthResponse> {
+  const res = await fetch(`${API_BASE_URL}/health`, { signal });
+  if (!res.ok && res.status !== 503) {
+    throw new Error('Failed to fetch health status');
+  }
+  return res.json();
+}
+

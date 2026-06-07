@@ -10,6 +10,7 @@ const DetailsPage = lazy(() => import('./pages/DetailsPage'));
 const SavedPage = lazy(() => import('./pages/SavedPage'));
 const AnalyticsPage = lazy(() => import('./pages/AnalyticsPage'));
 const AboutPage = lazy(() => import('./pages/AboutPage'));
+const HealthDashboard = lazy(() => import('./pages/HealthDashboard'));
 
 // Initialize TanStack React Query Client
 const queryClient = new QueryClient({
@@ -41,6 +42,7 @@ function App() {
               <Route path="/saved" element={<SavedPage />} />
               <Route path="/analytics" element={<AnalyticsPage />} />
               <Route path="/about" element={<AboutPage />} />
+              <Route path="/health" element={<HealthDashboard />} />
               <Route path="/internships/:applyLink" element={<DetailsPage />} />
               {/* Fallback route */}
               <Route path="*" element={<Navigate to="/" replace />} />

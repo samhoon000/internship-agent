@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import { spawn } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import logger from './logger.js';
 
 dotenv.config();
 
@@ -22,17 +23,17 @@ const redisConfig = {
 const connection = new Redis(redisConfig);
 
 connection.on('connect', () => {
-  console.log(`🚀 Worker successfully connected to Redis at ${redisHost}:${redisPort}`);
+  logger.info(`Worker successfully connected to Redis at ${redisHost}:${redisPort}`);
 });
 
 connection.on('error', (err) => {
-  console.error('[Worker Redis Connection Error]', err);
+  logger.error('[Worker Redis Connection Error]', { error: err.message, stack: err.stack });
 });
 
 // Helper to run python scraper/pipeline scripts
 function runPythonScript(args, job) {
   return new Promise((resolve, reject) => {
-    console.log(`[Worker] Spawning: python ${args.join(' ')}`);
+    logger.info(`[Worker] Spawning: python ${args.join(' ')}`);
     job.log(`[Worker] Spawning python run.py with args: ${args.join(' ')}`);
 
     const pythonProcess = spawn('python', args, {
@@ -45,7 +46,7 @@ function runPythonScript(args, job) {
       chunk.split('\n').forEach(line => {
         if (line.trim()) {
           job.log(`[STDOUT] ${line.trim()}`);
-          console.log(`[Job ${job.id}] ${line.trim()}`);
+          logger.info(`[Job ${job.id}] ${line.trim()}`);
         }
       });
     });
@@ -55,7 +56,7 @@ function runPythonScript(args, job) {
       chunk.split('\n').forEach(line => {
         if (line.trim()) {
           job.log(`[STDERR] ${line.trim()}`);
-          console.error(`[Job ${job.id} ERR] ${line.trim()}`);
+          logger.error(`[Job ${job.id} ERR] ${line.trim()}`);
         }
       });
     });
@@ -79,27 +80,27 @@ function runPythonScript(args, job) {
 
 // Instantiate worker for scraper runs
 const scraperWorker = new Worker('scraper-queue', async (job) => {
-  console.log(`[Worker] Starting scraper-queue job: ${job.id}`);
+  logger.info(`[Worker] Starting scraper-queue job: ${job.id}`);
   await job.log(`[Worker] Processing job ${job.id} on scraper-queue`);
   // Runs full pipeline by default (which includes scraper, cleanup, and liveness)
   await runPythonScript(['run.py'], job);
-  console.log(`[Worker] Completed scraper-queue job: ${job.id}`);
+  logger.info(`[Worker] Completed scraper-queue job: ${job.id}`);
 }, { connection });
 
 // Instantiate worker for stale cleanups
 const cleanupWorker = new Worker('cleanup-queue', async (job) => {
-  console.log(`[Worker] Starting cleanup-queue job: ${job.id}`);
+  logger.info(`[Worker] Starting cleanup-queue job: ${job.id}`);
   await job.log(`[Worker] Processing job ${job.id} on cleanup-queue`);
   await runPythonScript(['run.py', '--cleanup'], job);
-  console.log(`[Worker] Completed cleanup-queue job: ${job.id}`);
+  logger.info(`[Worker] Completed cleanup-queue job: ${job.id}`);
 }, { connection });
 
 // Instantiate worker for liveness checks
 const livenessWorker = new Worker('liveness-queue', async (job) => {
-  console.log(`[Worker] Starting liveness-queue job: ${job.id}`);
+  logger.info(`[Worker] Starting liveness-queue job: ${job.id}`);
   await job.log(`[Worker] Processing job ${job.id} on liveness-queue`);
   await runPythonScript(['run.py', '--liveness'], job);
-  console.log(`[Worker] Completed liveness-queue job: ${job.id}`);
+  logger.info(`[Worker] Completed liveness-queue job: ${job.id}`);
 }, { connection });
 
 // Helper to clear Redis caches on scraper writes
@@ -110,37 +111,37 @@ const clearCache = async () => {
       await connection.del(keys);
     }
     await connection.del('stats');
-    console.log('[Worker Cache Clear] Successfully cleared stats and filters cache.');
+    logger.info('[Worker Cache Clear] Successfully cleared stats and filters cache.');
   } catch (err) {
-    console.error('[Worker Cache Clear Error]', err);
+    logger.error('[Worker Cache Clear Error]', { error: err.message, stack: err.stack });
   }
 };
 
 scraperWorker.on('completed', async (job) => {
-  console.log(`[Worker] Scraper job ${job.id} completed.`);
+  logger.info(`[Worker] Scraper job ${job.id} completed.`);
   await clearCache();
 });
 
 cleanupWorker.on('completed', async (job) => {
-  console.log(`[Worker] Cleanup job ${job.id} completed.`);
+  logger.info(`[Worker] Cleanup job ${job.id} completed.`);
   await clearCache();
 });
 
 livenessWorker.on('completed', async (job) => {
-  console.log(`[Worker] Liveness job ${job.id} completed.`);
+  logger.info(`[Worker] Liveness job ${job.id} completed.`);
   await clearCache();
 });
 
 scraperWorker.on('failed', (job, err) => {
-  console.error(`[Worker] Scraper job ${job.id} failed:`, err);
+  logger.error(`[Worker] Scraper job ${job.id} failed:`, { error: err.message, stack: err.stack });
 });
 
 cleanupWorker.on('failed', (job, err) => {
-  console.error(`[Worker] Cleanup job ${job.id} failed:`, err);
+  logger.error(`[Worker] Cleanup job ${job.id} failed:`, { error: err.message, stack: err.stack });
 });
 
 livenessWorker.on('failed', (job, err) => {
-  console.error(`[Worker] Liveness job ${job.id} failed:`, err);
+  logger.error(`[Worker] Liveness job ${job.id} failed:`, { error: err.message, stack: err.stack });
 });
 
-console.log('👷 Background workers initialized and listening for tasks on Redis...');
+logger.info('Background workers initialized and listening for tasks on Redis...');

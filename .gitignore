@@ -44,4 +44,6 @@ __pycache__/
 *.pyc
 python_scraper/scratch/
 **/scratch/
+backend/logs/
+
 

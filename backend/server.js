@@ -3,10 +3,12 @@ import cors from 'cors';
 import morgan from 'morgan';
 import dotenv from 'dotenv';
 import apiRouter from './routes.js';
-
 import helmet from 'helmet';
+import logger from './logger.js';
+import { validateEnv } from './config/env.js';
 
 dotenv.config();
+validateEnv();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -33,7 +35,13 @@ app.use(cors({
 }));
 
 app.use(express.json());
-app.use(morgan('dev'));
+
+// Redirect HTTP requests to winston logger
+app.use(morgan(':method :url :status :res[content-length] - :response-time ms', {
+  stream: {
+    write: (message) => logger.info(message.trim())
+  }
+}));
 
 // Mount API routes
 app.use('/api', apiRouter);
@@ -49,7 +57,7 @@ app.get('/', (req, res) => {
 
 // Error handling middleware
 app.use((err, req, res, next) => {
-  console.error('[Global Error Handler]', err);
+  logger.error('[Global Error Handler]', { error: err.message, stack: err.stack });
   res.status(err.status || 500).json({
     error: err.message || 'Internal Server Error'
   });
@@ -57,8 +65,7 @@ app.use((err, req, res, next) => {
 
 // Start Express server
 app.listen(PORT, () => {
-  console.log(`=======================================================`);
-  console.log(`🚀 Express server running on port: ${PORT}`);
-  console.log(`🔗 API Endpoint: http://localhost:${PORT}/api`);
-  console.log(`=======================================================`);
+  logger.info(`Express server running on port: ${PORT}`);
+  logger.info(`API Endpoint: http://localhost:${PORT}/api`);
 });
+

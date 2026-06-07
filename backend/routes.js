@@ -8,6 +8,9 @@ import { Queue } from 'bullmq';
 import fs from 'fs';
 import readline from 'readline';
 import pool from './db.js';
+import { checkLatestBackup } from '../scripts/verify_backup.js';
+import logger from './logger.js';
+
 
 const router = express.Router();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -27,7 +30,7 @@ const redisConfig = {
 const redisClient = new Redis(redisConfig);
 
 redisClient.on('error', (err) => {
-  console.error('[Redis Client Error]', err);
+  logger.error('[Redis Client Error]', { error: err.message, stack: err.stack });
 });
 
 const scraperQueue = new Queue('scraper-queue', { connection: redisClient });
@@ -388,7 +391,7 @@ router.get('/internships', async (req, res) => {
       });
     }
   } catch (error) {
-    console.error('Error fetching internships:', error);
+    logger.error('Error fetching internships:', { error: error.message, stack: error.stack });
     res.status(500).json({ error: 'Internal Server Error' });
   }
 });
@@ -480,7 +483,7 @@ router.get('/internships/:applyLink', async (req, res) => {
       similar
     });
   } catch (error) {
-    console.error('Error fetching internship details:', error);
+    logger.error('Error fetching internship details:', { error: error.message, stack: error.stack });
     res.status(500).json({ error: 'Internal Server Error' });
   }
 });
@@ -497,7 +500,7 @@ router.get('/filters', async (req, res) => {
         return res.json(JSON.parse(cachedData));
       }
     } catch (cacheErr) {
-      console.error('[Redis Cache Read Error - filters]', cacheErr);
+      logger.error('[Redis Cache Read Error - filters]', { error: cacheErr.message });
     }
 
     const [rows] = await pool.query(
@@ -555,12 +558,12 @@ router.get('/filters', async (req, res) => {
     try {
       await redisClient.setex(cacheKey, 600, JSON.stringify(resultData));
     } catch (cacheErr) {
-      console.error('[Redis Cache Write Error - filters]', cacheErr);
+      logger.error('[Redis Cache Write Error - filters]', { error: cacheErr.message });
     }
 
     res.json(resultData);
   } catch (error) {
-    console.error('Error fetching filter values:', error);
+    logger.error('Error fetching filter values:', { error: error.message, stack: error.stack });
     res.status(500).json({ error: 'Internal Server Error' });
   }
 });
@@ -575,7 +578,7 @@ router.get('/stats', async (req, res) => {
         return res.json(JSON.parse(cachedData));
       }
     } catch (cacheErr) {
-      console.error('[Redis Cache Read Error - stats]', cacheErr);
+      logger.error('[Redis Cache Read Error - stats]', { error: cacheErr.message });
     }
 
     const [rows] = await pool.query(
@@ -729,12 +732,12 @@ router.get('/stats', async (req, res) => {
     try {
       await redisClient.setex(cacheKey, 600, JSON.stringify(resultData));
     } catch (cacheErr) {
-      console.error('[Redis Cache Write Error - stats]', cacheErr);
+      logger.error('[Redis Cache Write Error - stats]', { error: cacheErr.message });
     }
 
     res.json(resultData);
   } catch (error) {
-    console.error('Error fetching statistics:', error);
+    logger.error('Error fetching statistics:', { error: error.message, stack: error.stack });
     res.status(500).json({ error: 'Internal Server Error' });
   }
 });
@@ -771,7 +774,7 @@ router.post('/scrapers/run', verifyAdminKey, checkRedisConnection, async (req, r
       logs: [`[${new Date().toISOString()}] Scraper run queued (Job ID: ${job.id}).\n`]
     });
   } catch (error) {
-    console.error('Error queueing scraper:', error);
+    logger.error('Error queueing scraper:', { error: error.message, stack: error.stack });
     res.status(500).json({ error: 'Internal Server Error' });
   }
 });
@@ -808,7 +811,7 @@ router.get('/scrapers/status', checkRedisConnection, async (req, res) => {
       jobId
     });
   } catch (error) {
-    console.error('Error fetching scraper status:', error);
+    logger.error('Error fetching scraper status:', { error: error.message, stack: error.stack });
     res.status(500).json({ error: 'Internal Server Error' });
   }
 });
@@ -848,37 +851,94 @@ router.get('/ready', async (req, res) => {
 });
 
 router.get('/health', async (req, res) => {
-  const health = {
-    status: 'UP',
+  const healthData = {
+    status: 'HEALTHY',
     timestamp: new Date().toISOString(),
+    uptimeSeconds: Math.round(process.uptime()),
     services: {
-      db: { status: 'UP' },
-      redis: { status: 'UP' }
-    }
+      db: { status: 'UNKNOWN', latencyMs: 0 },
+      redis: { status: 'UNKNOWN' },
+      scrapers: [],
+      backup: {}
+    },
+    alerts: []
   };
 
+  // 1. Check MySQL Database Latency & Connection
+  const dbStart = Date.now();
   try {
     const connection = await pool.getConnection();
+    await connection.query('SELECT 1');
     connection.release();
-  } catch (error) {
-    health.status = 'DOWN';
-    health.services.db = { status: 'DOWN', error: error.message };
+    healthData.services.db.status = 'UP';
+    healthData.services.db.latencyMs = Date.now() - dbStart;
+  } catch (dbErr) {
+    healthData.status = 'UNHEALTHY';
+    healthData.services.db.status = 'DOWN';
+    healthData.services.db.error = dbErr.message;
+    healthData.alerts.push({ level: 'CRITICAL', service: 'MySQL', message: `Database connection failed: ${dbErr.message}` });
   }
 
+  // 2. Check Redis Status (fail fast, no hang)
   try {
-    const pingRes = await redisClient.ping();
-    if (pingRes !== 'PONG') {
-      throw new Error(`Ping failed with response: ${pingRes}`);
+    healthData.services.redis.status = redisClient.status;
+    if (redisClient.status !== 'ready') {
+      healthData.status = 'UNHEALTHY';
+      healthData.alerts.push({ level: 'HIGH', service: 'Redis', message: `Redis connection status is ${redisClient.status}` });
     }
-  } catch (error) {
-    health.status = 'DOWN';
-    health.services.redis = { status: 'DOWN', error: error.message };
+  } catch (redisErr) {
+    healthData.status = 'UNHEALTHY';
+    healthData.services.redis.status = 'DOWN';
+    healthData.alerts.push({ level: 'HIGH', service: 'Redis', message: `Redis query failed: ${redisErr.message}` });
   }
 
-  if (health.status === 'DOWN') {
-    res.status(503).json(health);
+  // 3. Check Scraper Source Health (from database source_health table)
+  if (healthData.services.db.status === 'UP') {
+    try {
+      const [rows] = await pool.query('SELECT * FROM source_health');
+      healthData.services.scrapers = rows.map(r => ({
+        source: r.source,
+        lastSuccessfulScrape: r.last_successful_scrape,
+        lastFailure: r.last_failure,
+        healthStatus: r.health_status
+      }));
+
+      // Generate alerts for unhealthy scrapers
+      rows.forEach(r => {
+        if (r.health_status === 'UNHEALTHY') {
+          healthData.alerts.push({
+            level: 'MEDIUM',
+            service: `Scraper:${r.source}`,
+            message: `Scraper ${r.source} failed in its last run (Failure time: ${r.last_failure})`
+          });
+        }
+      });
+    } catch (scraperErr) {
+      logger.error('[Health Check Scraper Error]', { error: scraperErr.message });
+    }
+  }
+
+  // 4. Check Backup Health
+  try {
+    const backupHealth = checkLatestBackup();
+    healthData.services.backup = backupHealth;
+    if (backupHealth.status !== 'HEALTHY') {
+      healthData.alerts.push({
+        level: 'WARNING',
+        service: 'Backup',
+        message: `Backup health check failed: ${backupHealth.reason}`
+      });
+    }
+  } catch (backupErr) {
+    healthData.services.backup = { status: 'UNHEALTHY', error: backupErr.message };
+  }
+
+  // Set appropriate status code (503 if any CRITICAL alerts exist)
+  const hasCritical = healthData.alerts.some(a => a.level === 'CRITICAL');
+  if (hasCritical) {
+    res.status(503).json(healthData);
   } else {
-    res.json(health);
+    res.json(healthData);
   }
 });
 

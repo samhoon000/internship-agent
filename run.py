@@ -23,14 +23,15 @@ from python_scraper.utils.validators import validate_url, run_validation_pipelin
 from playwright.async_api import async_playwright
 from python_scraper.config import USER_AGENTS, PLAYWRIGHT_VIEWPORT
 
-# Setup logging
+# Setup logging (stdout + rotating file)
 log_file = Path(__file__).resolve().parent / "python_scraper" / "python_scraper.log"
+from logging.handlers import RotatingFileHandler
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler(log_file, encoding='utf-8')
+        RotatingFileHandler(log_file, maxBytes=10*1024*1024, backupCount=3, encoding='utf-8')
     ]
 )
 logger = logging.getLogger("python_scraper.pipeline")

@@ -126,3 +126,17 @@ MIN_LEGITIMACY_TO_KEEP = 45
 # 45-59 LOW_CONFIDENCE
 # <45 REJECT
 
+# Validate configuration on startup
+from urllib.parse import urlparse
+import sys
+
+if not DATABASE_URL:
+    print("\n❌ FATAL CONFIGURATION ERROR: DATABASE_URL is not set.\n", file=sys.stderr)
+    sys.exit(1)
+
+parsed_db = urlparse(DATABASE_URL)
+if parsed_db.scheme != "mysql+pymysql" and not DATABASE_URL.startswith("mysql+pymysql://"):
+    print(f"\n❌ FATAL CONFIGURATION ERROR:\nDATABASE_URL must use the mysql+pymysql scheme. Got: '{DATABASE_URL}'\n", file=sys.stderr)
+    sys.exit(1)
+
+

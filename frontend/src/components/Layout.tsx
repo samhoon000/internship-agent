@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Shield, Bookmark, BarChart2, Info, Compass, Menu, X, Database } from 'lucide-react';
+import { Shield, Bookmark, BarChart2, Info, Compass, Menu, X, Database, Activity } from 'lucide-react';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -36,8 +36,10 @@ export default function Layout({ children }: LayoutProps) {
     { name: 'Explore', path: '/explore', icon: Compass },
     { name: 'Saved', path: '/saved', icon: Bookmark, badge: savedCount },
     { name: 'Analytics', path: '/analytics', icon: BarChart2 },
+    { name: 'Health', path: '/health', icon: Activity },
     { name: 'About', path: '/about', icon: Info }
   ];
+
 
   return (
     <div className="flex flex-col min-h-screen bg-[#f8fafc]">
@@ -180,6 +182,11 @@ export default function Layout({ children }: LayoutProps) {
                 <li>
                   <Link to="/about" className="text-slate-500 hover:text-primary-600 transition-colors">
                     How it Works
+                  </Link>
+                </li>
+                <li>
+                  <Link to="/health" className="text-slate-500 hover:text-primary-600 transition-colors">
+                    System Health
                   </Link>
                 </li>
               </ul>

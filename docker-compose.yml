@@ -55,6 +55,11 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:5000/api/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
 
   worker:
     build:
@@ -77,6 +82,38 @@ services:
       redis:
         condition: service_healthy
 
+  db_backup:
+    image: mysql:8.0
+    container_name: internship_db_backup
+    restart: always
+    environment:
+      - DB_HOST=db
+      - DB_USER=root
+      - DB_PASSWORD=
+      - DB_NAME=internship
+      - BACKUP_DIR=/backups
+    volumes:
+      - mysql_backups:/backups
+    entrypoint: >
+      /bin/sh -c "
+      echo 'Starting backup service cron loop...';
+      while true; do
+        echo 'Creating database backup...';
+        mkdir -p /backups;
+        FILENAME='/backups/backup_$$(date +%Y-%m-%d_%H-%M-%S).sql';
+        mysqldump -h $$DB_HOST -u $$DB_USER $$DB_NAME > $$FILENAME;
+        gzip -f $$FILENAME;
+        echo 'Backup created successfully.';
+        echo 'Enforcing retention policy (older than 7 days)...';
+        find /backups -name 'backup_*.sql.gz' -type f -mtime +7 -delete;
+        echo 'Sleeping for 24 hours...';
+        sleep 86400;
+      done
+      "
+    depends_on:
+      db:
+        condition: service_healthy
+
   frontend:
     build:
       context: .
@@ -86,8 +123,15 @@ services:
     ports:
       - "5173:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
 
 volumes:
   mysql_data:
   redis_data:
+  mysql_backups:

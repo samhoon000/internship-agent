@@ -20,7 +20,9 @@
     "ioredis": "^5.4.1",
     "morgan": "^1.10.0",
     "mysql2": "^3.9.7",
-    "sanitize-html": "^2.13.0"
+    "sanitize-html": "^2.13.0",
+    "winston": "^3.19.0",
+    "winston-daily-rotate-file": "^5.0.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.0"
