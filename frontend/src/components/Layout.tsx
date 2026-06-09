@@ -16,7 +16,7 @@ export default function Layout({ children }: LayoutProps) {
     try {
       const saved = JSON.parse(localStorage.getItem('saved_internships') || '[]');
       setSavedCount(saved.length);
-    } catch (e) {
+    } catch {
       setSavedCount(0);
     }
   };

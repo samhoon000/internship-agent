@@ -10,7 +10,6 @@ import {
   HardDrive, 
   Clock, 
   FileText, 
-  FileCheck2, 
   Sparkles,
   Search,
   Bell

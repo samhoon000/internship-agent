@@ -63,6 +63,19 @@ export default function ExplorePage() {
   const page = searchParams.get('page') || '1';
   const category = searchParams.get('category') || 'Data/AI';
 
+  // Helper to update query parameters in URL
+  const updateQueryParams = (updates: Record<string, string | null>) => {
+    const params = new URLSearchParams(searchParams);
+    Object.entries(updates).forEach(([key, value]) => {
+      if (value === null || value === '' || value === 'false') {
+        params.delete(key);
+      } else {
+        params.set(key, value);
+      }
+    });
+    setSearchParams(params);
+  };
+
   const dynamicSkillsList = useMemo(() => {
     if (category === 'Software') {
       return ['JavaScript', 'TypeScript', 'React', 'Node.js', 'HTML/CSS', 'Java', 'C++', 'Python', 'Flutter', 'Git'];
@@ -283,25 +296,12 @@ export default function ExplorePage() {
       console.error('Error computing recommendations:', e);
     }
     return [];
-  }, [listingsData?.internships]);
-
-  // Helper to update query parameters in URL
-  const updateQueryParams = (updates: Record<string, string | null>) => {
-    const params = new URLSearchParams(searchParams);
-    Object.entries(updates).forEach(([key, value]) => {
-      if (value === null || value === '' || value === 'false') {
-        params.delete(key);
-      } else {
-        params.set(key, value);
-      }
-    });
-    setSearchParams(params);
-  };
+  }, [listingsData]);
 
   // Helper to toggle array filter values
   const toggleArrayFilter = (key: string, list: string[], value: string) => {
     const index = list.indexOf(value);
-    let newList = [...list];
+    const newList = [...list];
     if (index > -1) {
       newList.splice(index, 1);
     } else {

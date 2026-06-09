@@ -39,7 +39,7 @@ export function formatStipend(stipendStr: string | null | undefined): FormattedS
   // Ensure consistent spacing and prefix placement
   if (currency === 'INR') {
     // Clean any leading symbol and re-apply cleanly as "₹ 7,000 /month"
-    let stripSymbol = formatted.replace(/₹/g, '').trim();
+    const stripSymbol = formatted.replace(/₹/g, '').trim();
     
     // Check if it starts with digits to format nicely
     const digitsMatch = stripSymbol.match(/^(\d+)/);
@@ -52,7 +52,7 @@ export function formatStipend(stipendStr: string | null | undefined): FormattedS
     }
   } else if (currency === 'USD') {
     // Clean any leading symbol and re-apply cleanly as "$500 /month" (no space for USD)
-    let stripSymbol = formatted.replace(/\$/g, '').trim();
+    const stripSymbol = formatted.replace(/\$/g, '').trim();
     
     const digitsMatch = stripSymbol.match(/^(\d+)/);
     if (digitsMatch) {

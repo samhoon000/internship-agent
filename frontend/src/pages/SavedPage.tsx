@@ -11,7 +11,7 @@ export default function SavedPage() {
     try {
       const saved = JSON.parse(localStorage.getItem('saved_internships') || '[]');
       setSavedList(saved);
-    } catch (e) {
+    } catch {
       setSavedList([]);
     }
   };

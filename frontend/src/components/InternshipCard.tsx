@@ -18,7 +18,7 @@ function InternshipCard({ internship, onBookmarkChanged }: InternshipCardProps) 
     try {
       const saved = JSON.parse(localStorage.getItem('saved_internships') || '[]');
       setIsSaved(saved.some((item: Internship) => item.apply_link === internship.apply_link));
-    } catch (e) {
+    } catch {
       setIsSaved(false);
     }
   }, [internship.apply_link]);
