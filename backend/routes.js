@@ -896,12 +896,24 @@ router.get('/health', async (req, res) => {
   if (healthData.services.db.status === 'UP') {
     try {
       const [rows] = await pool.query('SELECT * FROM source_health');
-      healthData.services.scrapers = rows.map(r => ({
-        source: r.source,
-        lastSuccessfulScrape: r.last_successful_scrape,
-        lastFailure: r.last_failure,
-        healthStatus: r.health_status
-      }));
+      healthData.services.scrapers = rows.map(r => {
+        const successCount = r.success_count || 0;
+        const failureCount = r.failure_count || 0;
+        const totalRuns = successCount + failureCount;
+        const successRate = totalRuns > 0 ? Math.round((successCount / totalRuns) * 100) : 0;
+        
+        return {
+          source: r.source,
+          lastSuccessfulScrape: r.last_successful_scrape,
+          lastFailure: r.last_failure,
+          healthStatus: r.health_status,
+          lastJobsFound: r.last_jobs_found || 0,
+          lastJobsSaved: r.last_jobs_saved || 0,
+          successCount: successCount,
+          failureCount: failureCount,
+          successRate: successRate
+        };
+      });
 
       // Generate alerts for unhealthy scrapers
       rows.forEach(r => {

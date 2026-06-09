@@ -5,6 +5,7 @@ import { spawn } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import logger from './logger.js';
+import { sendDiscordAlert } from './alerting.js';
 
 dotenv.config();
 
@@ -28,6 +29,11 @@ connection.on('connect', () => {
 
 connection.on('error', (err) => {
   logger.error('[Worker Redis Connection Error]', { error: err.message, stack: err.stack });
+  sendDiscordAlert(
+    'Redis Connection Error',
+    `Worker Redis connection failed at host ${redisHost}:${redisPort}. Error: ${err.message}`,
+    'error'
+  );
 });
 
 // Helper to run python scraper/pipeline scripts
@@ -134,14 +140,29 @@ livenessWorker.on('completed', async (job) => {
 
 scraperWorker.on('failed', (job, err) => {
   logger.error(`[Worker] Scraper job ${job.id} failed:`, { error: err.message, stack: err.stack });
+  sendDiscordAlert(
+    'Scraper Job Failed',
+    `Scraper job ${job.id} failed with error: ${err.message}`,
+    'error'
+  );
 });
 
 cleanupWorker.on('failed', (job, err) => {
   logger.error(`[Worker] Cleanup job ${job.id} failed:`, { error: err.message, stack: err.stack });
+  sendDiscordAlert(
+    'Cleanup Job Failed',
+    `Cleanup job ${job.id} failed with error: ${err.message}`,
+    'error'
+  );
 });
 
 livenessWorker.on('failed', (job, err) => {
   logger.error(`[Worker] Liveness job ${job.id} failed:`, { error: err.message, stack: err.stack });
+  sendDiscordAlert(
+    'Liveness Job Failed',
+    `Liveness job ${job.id} failed with error: ${err.message}`,
+    'error'
+  );
 });
 
 logger.info('Background workers initialized and listening for tasks on Redis...');

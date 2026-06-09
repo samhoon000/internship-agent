@@ -34,6 +34,37 @@ engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 session_factory = sessionmaker(bind=engine)
 Session = scoped_session(session_factory)
 
+class DBExistenceChecker:
+    """
+    On-demand existence checker for URL links. 
+    Implements the '__contains__' magic method to act as a set, querying the DB 
+    by Primary Key (apply_link) and caching results locally.
+    Memory complexity is O(N) where N is the number of processed links, preventing full-table scans.
+    """
+    def __init__(self):
+        self.cache = {}
+
+    def __contains__(self, link: str) -> bool:
+        if not link:
+            return False
+        link_str = link.strip()
+        if link_str in self.cache:
+            return self.cache[link_str]
+        
+        session = Session()
+        try:
+            # Performs an indexed check on the Primary Key
+            exists = session.query(Internship.apply_link).filter(
+                Internship.apply_link == link_str
+            ).first() is not None
+            self.cache[link_str] = exists
+            return exists
+        except Exception as e:
+            logger.error(f"Error checking link existence: {e}")
+            return False
+        finally:
+            session.close()
+
 def test_connection() -> bool:
     """
     Tests the database connection to the local MySQL database 'internship'.
@@ -156,8 +187,34 @@ def save_internships(internship_dicts, stats_dict=None):
     from python_scraper.config import MIN_LEGITIMACY_TO_KEEP
 
     try:
-        # Load all existing records from DB
-        existing_jobs = {job.apply_link: job for job in session.query(Internship).all()}
+        # Optimization: Query candidate duplicates from database selectively
+        # Complexity improvement: O(log M) B-tree lookup on PK & indexed company_name
+        # replacing O(M) full table scan. Prevents OOM memory growth.
+        batch_links = [item.get('apply_link') for item in internship_dicts if item.get('apply_link')]
+        batch_companies = {item.get('company_name', '').strip() for item in internship_dicts if item.get('company_name')}
+        
+        from sqlalchemy import or_, and_
+        company_conditions = []
+        for comp in batch_companies:
+            if not comp:
+                continue
+            company_conditions.append(Internship.company_name == comp)
+            first_word = comp.split()[0] if comp.strip() else ""
+            if len(first_word) > 2:
+                company_conditions.append(Internship.company_name.like(f"{first_word}%"))
+        
+        query_filter = Internship.apply_link.in_(batch_links)
+        if company_conditions:
+            query_filter = or_(
+                query_filter,
+                and_(
+                    Internship.is_active == True,
+                    or_(*company_conditions)
+                )
+            )
+
+        existing_jobs_list = session.query(Internship).filter(query_filter).all()
+        existing_jobs = {job.apply_link: job for job in existing_jobs_list}
         
         # Map canonical keys and normalized URLs to existing apply_links
         existing_combos_map = {}
@@ -401,27 +458,39 @@ def save_internships(internship_dicts, stats_dict=None):
         Session.remove()
 
 
-def update_source_health(source_name: str, success: bool):
+def update_source_health(source_name: str, success: bool, jobs_found: int = 0, jobs_saved: int = 0):
     """
-    Updates the health record for a given scraper source in the source_health table.
+    Updates the health record for a given scraper source in the source_health table,
+    including execution metrics (found, saved, success/failure counts).
     """
     from python_scraper.database.models import SourceHealth
     session = get_db_session()
     try:
         health = session.query(SourceHealth).filter(SourceHealth.source == source_name).first()
         if not health:
-            health = SourceHealth(source=source_name)
+            health = SourceHealth(
+                source=source_name,
+                success_count=0,
+                failure_count=0,
+                last_jobs_found=0,
+                last_jobs_saved=0
+            )
             session.add(health)
             
+        health.last_jobs_found = jobs_found
+        health.last_jobs_saved = jobs_saved
+        
         if success:
             health.last_successful_scrape = datetime.utcnow()
             health.health_status = "HEALTHY"
+            health.success_count += 1
         else:
             health.last_failure = datetime.utcnow()
             health.health_status = "UNHEALTHY"
+            health.failure_count += 1
             
         session.commit()
-        logger.info(f"[Source Health] Updated {source_name} health: {health.health_status}")
+        logger.info(f"[Source Health] Updated {source_name} health: {health.health_status} (found={jobs_found}, saved={jobs_saved}, success_count={health.success_count}, failure_count={health.failure_count})")
     except Exception as e:
         session.rollback()
         logger.error(f"Failed to update source health for {source_name}: {e}")

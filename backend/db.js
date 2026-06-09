@@ -2,6 +2,7 @@ import mysql from 'mysql2/promise';
 import dotenv from 'dotenv';
 
 import logger from './logger.js';
+import { sendDiscordAlert } from './alerting.js';
 
 dotenv.config();
 
@@ -23,6 +24,11 @@ const pool = mysql.createPool({
     connection.release();
   } catch (error) {
     logger.error('Fatal: Database pool connection failed.', { error: error.message });
+    await sendDiscordAlert(
+      'Database Connection Failed',
+      `Fatal: Express backend failed to connect to MySQL database at ${process.env.DB_HOST || 'localhost'}. Error: ${error.message}`,
+      'error'
+    );
   }
 })();
 

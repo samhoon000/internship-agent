@@ -342,6 +342,9 @@ export default function HealthDashboard() {
                 <tr className="border-b border-slate-200 text-slate-400 font-semibold bg-slate-50/50">
                   <th className="py-2.5 px-4">Scraper Source</th>
                   <th className="py-2.5 px-4">Status</th>
+                  <th className="py-2.5 px-4 text-center">Success Rate</th>
+                  <th className="py-2.5 px-4 text-center">Last Run (Found / Saved)</th>
+                  <th className="py-2.5 px-4 text-center">Total Runs (Ok / Fail)</th>
                   <th className="py-2.5 px-4">Last Successful Run</th>
                   <th className="py-2.5 px-4">Last Failure Run</th>
                 </tr>
@@ -359,6 +362,29 @@ export default function HealthDashboard() {
                         <span className={`w-1.5 h-1.5 rounded-full ${s.healthStatus === 'HEALTHY' ? 'bg-emerald-500' : 'bg-rose-500 animate-ping'}`} />
                         {s.healthStatus === 'HEALTHY' ? 'HEALTHY' : 'UNHEALTHY'}
                       </span>
+                    </td>
+                    <td className="py-3 px-4 text-center">
+                      <div className="flex items-center justify-center gap-1.5">
+                        <span className="font-semibold text-slate-700">{s.successRate}%</span>
+                        <div className="w-12 bg-slate-100 rounded-full h-1.5 overflow-hidden">
+                          <div 
+                            className={`h-full rounded-full ${
+                              s.successRate >= 90 ? 'bg-emerald-500' : s.successRate >= 60 ? 'bg-amber-500' : 'bg-rose-500'
+                            }`}
+                            style={{ width: `${s.successRate}%` }}
+                          />
+                        </div>
+                      </div>
+                    </td>
+                    <td className="py-3 px-4 text-center text-slate-600">
+                      <span className="font-semibold text-slate-700">{s.lastJobsFound}</span>
+                      <span className="text-slate-400 mx-1">/</span>
+                      <span className="font-semibold text-emerald-600">{s.lastJobsSaved}</span>
+                    </td>
+                    <td className="py-3 px-4 text-center text-slate-500">
+                      <span className="text-slate-600 font-medium">{s.successCount}</span>
+                      <span className="text-slate-400 mx-1">/</span>
+                      <span className="text-rose-500 font-medium">{s.failureCount}</span>
                     </td>
                     <td className="py-3 px-4 text-slate-500 font-mono text-[11px]">{formatDate(s.lastSuccessfulScrape)}</td>
                     <td className="py-3 px-4 font-mono text-[11px]">

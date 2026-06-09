@@ -208,143 +208,154 @@ async def main():
     parser.add_argument("--scrape", action="store_true", help="Run scraper only")
     args = parser.parse_args()
 
+    from python_scraper.utils.alerts import send_discord_alert
     start_time = time.time()
     
-    # If no flags are provided, run full pipeline
-    run_full = not (args.cleanup or args.liveness or args.scrape)
+    try:
+        # If no flags are provided, run full pipeline
+        run_full = not (args.cleanup or args.liveness or args.scrape)
 
-    if args.cleanup:
-        logger.info("=== STARTING STALE CLEANUP PIPELINE ===")
-        init_db()
-        session = get_db_session()
-        cleanup_old_internships(session)
-        session.close()
-        logger.info(f"Cleanup finished in {time.time() - start_time:.2f}s")
-        return
+        if args.cleanup:
+            logger.info("=== STARTING STALE CLEANUP PIPELINE ===")
+            init_db()
+            session = get_db_session()
+            cleanup_old_internships(session)
+            session.close()
+            logger.info(f"Cleanup finished in {time.time() - start_time:.2f}s")
+            return
 
-    if args.liveness:
-        logger.info("=== STARTING LIVENESS CHECK PIPELINE ===")
-        init_db()
-        session = get_db_session()
-        await remove_dead_links(session)
-        session.close()
-        logger.info(f"Liveness checks finished in {time.time() - start_time:.2f}s")
-        return
+        if args.liveness:
+            logger.info("=== STARTING LIVENESS CHECK PIPELINE ===")
+            init_db()
+            session = get_db_session()
+            await remove_dead_links(session)
+            session.close()
+            logger.info(f"Liveness checks finished in {time.time() - start_time:.2f}s")
+            return
 
-    logger.info("=== STARTING AUTOMATED SCRAPING PIPELINE ===")
-    
-    # Initialize DB
-    init_db()
-    
-    deleted_stale = 0
-    deleted_expired = 0
-    
-    if run_full:
-        session = get_db_session()
-        # STEP 1 - Stale Cleanups
-        deleted_stale = cleanup_old_internships(session)
-        # STEP 2 - Dead Links Cleanups
-        deleted_expired = await remove_dead_links(session)
-        # Close session before scraping
-        session.close()
-    
-    # 4. STEP 3 - Async Parallel Scraping
-    all_scraped_items = []
-    scrapers = []
-    
-    # Launch browser ONCE and block unnecessary resources
-    from python_scraper.config import PLAYWRIGHT_HEADLESS
-    async with async_playwright() as p:
-        logger.info(f"Launching Chromium browser instance (headless={PLAYWRIGHT_HEADLESS})...")
-        browser = await p.chromium.launch(
-            headless=PLAYWRIGHT_HEADLESS,
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--no-sandbox",
-                "--disable-infobars"
-            ]
-        )
+        logger.info("=== STARTING AUTOMATED SCRAPING PIPELINE ===")
         
-        # Reuse browser context
-        browser_context = await browser.new_context(
-            user_agent=random.choice(USER_AGENTS),
-            viewport=PLAYWRIGHT_VIEWPORT,
-            extra_http_headers={"Accept-Language": "en-US,en;q=0.9"}
-        )
+        # Initialize DB
+        init_db()
         
-        try:
-            # Parallel Source Scraping
-            all_scraped_items, scrapers = await scrape_all_sources_parallel(browser_context)
-        finally:
-            await browser_context.close()
-            await browser.close()
-            logger.info("Headless Chromium browser instance closed successfully.")
+        deleted_stale = 0
+        deleted_expired = 0
+        
+        if run_full:
+            session = get_db_session()
+            # STEP 1 - Stale Cleanups
+            deleted_stale = cleanup_old_internships(session)
+            # STEP 2 - Dead Links Cleanups
+            deleted_expired = await remove_dead_links(session)
+            # Close session before scraping
+            session.close()
+        
+        # 4. STEP 3 - Async Parallel Scraping
+        all_scraped_items = []
+        scrapers = []
+        
+        # Launch browser ONCE and block unnecessary resources
+        from python_scraper.config import PLAYWRIGHT_HEADLESS
+        async with async_playwright() as p:
+            logger.info(f"Launching Chromium browser instance (headless={PLAYWRIGHT_HEADLESS})...")
+            browser = await p.chromium.launch(
+                headless=PLAYWRIGHT_HEADLESS,
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--no-sandbox",
+                    "--disable-infobars"
+                ]
+            )
             
-    # 5. STEP 4 - Centralized Async URL Liveness Validation
-    validated_items = await validate_new_items_liveness(all_scraped_items)
-    
-    # 6. STEP 5 & 6 - Deduplicate & Bulk Insert into DB
-    session = get_db_session()
-    stats = {}
-    
-    # Save internships runs local O(1) deduplication and bulk inserts
-    added, _, skipped = save_internships(validated_items, stats_dict=stats)
-    
-    # Update source health in database
-    from python_scraper.database.db import update_source_health
-    for s in scrapers:
-        # Check if successfully scraped (scraped_count > 0 and not blocked)
-        success = (s.scraped_count > 0 and not getattr(s, 'blocked', False))
-        update_source_health(s.source_name, success)
-    
-    # 7. STEP 7 - Refresh Stats
-    refresh_stats(session)
-    session.close()
-    
-    # Pipeline execution metrics calculations
-    elapsed = time.time() - start_time
-    minutes = int(elapsed // 60)
-    seconds = int(elapsed % 60)
-    runtime_str = f"{minutes}m {seconds}s" if minutes > 0 else f"{seconds}s"
-    
-    # Speed improvements calculation (comparing vs standard sequential scraping runtime of ~2m 40s (160s))
-    baseline_runtime = 160.0
-    speed_improvement = int(((baseline_runtime - elapsed) / baseline_runtime) * 100)
-    speed_improvement_str = f"+{speed_improvement}%" if speed_improvement > 0 else "N/A (first run / cached)"
-    
-    # Gather scraper details
-    internshala_cnt = next((s.scraped_count for s in scrapers if s.source_name == "Internshala"), 0)
-    wellfound_cnt = next((s.scraped_count for s in scrapers if s.source_name == "Wellfound"), 0)
-    yc_cnt = next((s.scraped_count for s in scrapers if s.source_name == "YC Jobs"), 0)
-    indeed_cnt = next((s.scraped_count for s in scrapers if s.source_name == "Indeed India"), 0)
-    
-    # Calculate detailed quality checks metrics
-    passed_direct_role = sum(1 for item in validated_items if item.get('confidence') == 'HIGH_CONFIDENCE')
-    passed_fuzzy = sum(1 for item in validated_items if item.get('confidence') == 'MEDIUM_CONFIDENCE' and not item.get('rescued'))
-    passed_rescue = sum(1 for item in validated_items if item.get('rescued') == True)
-    
-    rejected_unpaid = sum(s.unpaid_or_cert for s in scrapers)
-    rejected_irrelevant = sum(s.non_tech_roles + s.rejected_suspicious + s.score_below_threshold + s.missing_fields for s in scrapers)
-    total_raw_scraped = sum(s.scraped_count for s in scrapers)
-    
-    # Calculate yield/collection improvement
-    yield_rate = int((added / total_raw_scraped) * 100) if total_raw_scraped > 0 else 0
+            # Reuse browser context
+            browser_context = await browser.new_context(
+                user_agent=random.choice(USER_AGENTS),
+                viewport=PLAYWRIGHT_VIEWPORT,
+                extra_http_headers={"Accept-Language": "en-US,en;q=0.9"}
+            )
+            
+            try:
+                # Parallel Source Scraping
+                all_scraped_items, scrapers = await scrape_all_sources_parallel(browser_context)
+            finally:
+                await browser_context.close()
+                await browser.close()
+                logger.info("Headless Chromium browser instance closed successfully.")
+                
+        # 5. STEP 4 - Centralized Async URL Liveness Validation
+        validated_items = await validate_new_items_liveness(all_scraped_items)
+        
+        # 6. STEP 5 & 6 - Deduplicate & Bulk Insert into DB
+        session = get_db_session()
+        stats = {}
+        
+        # Save internships runs local O(1) deduplication and bulk inserts
+        added, _, skipped = save_internships(validated_items, stats_dict=stats)
+        
+        # Update source health in database and send alerts for blocked / 0 listings
+        from python_scraper.database.db import update_source_health
+        for s in scrapers:
+            # Check if successfully scraped (scraped_count > 0 and not blocked)
+            success = (s.scraped_count > 0 and not getattr(s, 'blocked', False))
+            jobs_saved = stats.get(s.source_name, {}).get('added', 0)
+            update_source_health(s.source_name, success, jobs_found=s.scraped_count, jobs_saved=jobs_saved)
+            
+            if not success:
+                reason = "returned 0 listings" if s.scraped_count == 0 else "was blocked/failed to crawl"
+                send_discord_alert(
+                    f"Scraper Source Alert: {s.source_name}",
+                    f"Warning: Scraper for source '{s.source_name}' {reason} during the run.",
+                    "warning"
+                )
+        
+        # 7. STEP 7 - Refresh Stats
+        refresh_stats(session)
+        session.close()
+        
+        # Pipeline execution metrics calculations
+        elapsed = time.time() - start_time
+        minutes = int(elapsed // 60)
+        seconds = int(elapsed % 60)
+        runtime_str = f"{minutes}m {seconds}s" if minutes > 0 else f"{seconds}s"
+        
+        # Speed improvements calculation (comparing vs standard sequential scraping runtime of ~2m 40s (160s))
+        baseline_runtime = 160.0
+        speed_improvement = int(((baseline_runtime - elapsed) / baseline_runtime) * 100)
+        speed_improvement_str = f"+{speed_improvement}%" if speed_improvement > 0 else "N/A (first run / cached)"
+        
+        # Gather scraper details
+        internshala_cnt = next((s.scraped_count for s in scrapers if s.source_name == "Internshala"), 0)
+        wellfound_cnt = next((s.scraped_count for s in scrapers if s.source_name == "Wellfound"), 0)
+        yc_cnt = next((s.scraped_count for s in scrapers if s.source_name == "YC Jobs"), 0)
+        indeed_cnt = next((s.scraped_count for s in scrapers if s.source_name == "Indeed India"), 0)
+        
+        # Calculate detailed quality checks metrics
+        passed_direct_role = sum(1 for item in validated_items if item.get('confidence') == 'HIGH_CONFIDENCE')
+        passed_fuzzy = sum(1 for item in validated_items if item.get('confidence') == 'MEDIUM_CONFIDENCE' and not item.get('rescued'))
+        passed_rescue = sum(1 for item in validated_items if item.get('rescued') == True)
+        
+        rejected_unpaid = sum(s.unpaid_or_cert for s in scrapers)
+        rejected_irrelevant = sum(s.non_tech_roles + s.rejected_suspicious + s.score_below_threshold + s.missing_fields for s in scrapers)
+        total_raw_scraped = sum(s.scraped_count for s in scrapers)
+        
+        # Calculate yield/collection improvement
+        yield_rate = int((added / total_raw_scraped) * 100) if total_raw_scraped > 0 else 0
 
-    high_count = sum(1 for item in validated_items if item.get('confidence') == 'HIGH_CONFIDENCE')
-    medium_count = sum(1 for item in validated_items if item.get('confidence') == 'MEDIUM_CONFIDENCE')
-    low_count = sum(1 for item in validated_items if item.get('confidence') == 'LOW_CONFIDENCE')
-    reject_count = total_raw_scraped - len(validated_items)
+        high_count = sum(1 for item in validated_items if item.get('confidence') == 'HIGH_CONFIDENCE')
+        medium_count = sum(1 for item in validated_items if item.get('confidence') == 'MEDIUM_CONFIDENCE')
+        low_count = sum(1 for item in validated_items if item.get('confidence') == 'LOW_CONFIDENCE')
+        reject_count = total_raw_scraped - len(validated_items)
 
-    from python_scraper.utils.validators import REJECTION_REASONS_COUNTER
-    rejections_summary = "\nTop Rejection Reasons:\n"
-    if REJECTION_REASONS_COUNTER:
-        for reason, count in REJECTION_REASONS_COUNTER.most_common(5):
-            rejections_summary += f"  - {reason}: {count}\n"
-    else:
-        rejections_summary += "  - No rejections logged during this run.\n"
+        from python_scraper.utils.validators import REJECTION_REASONS_COUNTER
+        rejections_summary = "\nTop Rejection Reasons:\n"
+        if REJECTION_REASONS_COUNTER:
+            for reason, count in REJECTION_REASONS_COUNTER.most_common(5):
+                rejections_summary += f"  - {reason}: {count}\n"
+        else:
+            rejections_summary += "  - No rejections logged during this run.\n"
 
-    # Print and log the professional SCRAPER RUN SUMMARY
-    summary_report = f"""
+        # Print and log the professional SCRAPER RUN SUMMARY
+        summary_report = f"""
 =================================
 SCRAPER QUALITY REPORT
 =================================
@@ -373,8 +384,17 @@ Runtime: {runtime_str}
 Speed improvement: {speed_improvement_str}
 {rejections_summary}=================================
 """
-    print(summary_report)
-    logger.info(summary_report)
+        print(summary_report)
+        logger.info(summary_report)
+
+    except Exception as e:
+        logger.critical(f"Pipeline execution failed: {e}", exc_info=True)
+        send_discord_alert(
+            "Scraper Pipeline Execution Failed",
+            f"Critical: Scraper pipeline run.py encountered an uncaught error: {e}",
+            "error"
+        )
+        sys.exit(1)
 
 
 if __name__ == "__main__":

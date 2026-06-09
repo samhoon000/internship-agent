@@ -23,24 +23,29 @@ def upgrade() -> None:
     conn = op.get_bind()
     inspector = sa.inspect(conn)
     columns = [c['name'] for c in inspector.get_columns('internships')]
+    indexes = [idx['name'] for idx in inspector.get_indexes('internships')]
     
     # Conditionally add relevance fields
     if 'relevance_score' not in columns:
         op.add_column('internships', sa.Column('relevance_score', sa.Integer(), server_default='0', nullable=False))
+    if 'ix_internships_relevance_score' not in indexes:
         op.create_index(op.f('ix_internships_relevance_score'), 'internships', ['relevance_score'], unique=False)
     
     if 'relevance_tier' not in columns:
         op.add_column('internships', sa.Column('relevance_tier', sa.String(length=50), server_default='IRRELEVANT', nullable=False))
+    if 'ix_internships_relevance_tier' not in indexes:
         op.create_index(op.f('ix_internships_relevance_tier'), 'internships', ['relevance_tier'], unique=False)
         
     # Conditionally add role category
     if 'role_category' not in columns:
         op.add_column('internships', sa.Column('role_category', sa.String(length=50), server_default='Other', nullable=False))
+    if 'ix_internships_role_category' not in indexes:
         op.create_index(op.f('ix_internships_role_category'), 'internships', ['role_category'], unique=False)
 
     # Conditionally add soft delete & monitoring columns
     if 'is_active' not in columns:
         op.add_column('internships', sa.Column('is_active', sa.Boolean(), server_default='1', nullable=False))
+    if 'ix_internships_is_active' not in indexes:
         op.create_index(op.f('ix_internships_is_active'), 'internships', ['is_active'], unique=False)
 
     if 'inactive_reason' not in columns:
@@ -48,14 +53,17 @@ def upgrade() -> None:
 
     if 'last_seen' not in columns:
         op.add_column('internships', sa.Column('last_seen', sa.DateTime(), server_default=sa.text('NOW()'), nullable=False))
+    if 'ix_internships_last_seen' not in indexes:
         op.create_index(op.f('ix_internships_last_seen'), 'internships', ['last_seen'], unique=False)
 
     if 'deactivated_at' not in columns:
         op.add_column('internships', sa.Column('deactivated_at', sa.DateTime(), nullable=True))
+    if 'ix_internships_deactivated_at' not in indexes:
         op.create_index(op.f('ix_internships_deactivated_at'), 'internships', ['deactivated_at'], unique=False)
 
     if 'consecutive_failures' not in columns:
         op.add_column('internships', sa.Column('consecutive_failures', sa.Integer(), server_default='0', nullable=False))
+    if 'ix_internships_consecutive_failures' not in indexes:
         op.create_index(op.f('ix_internships_consecutive_failures'), 'internships', ['consecutive_failures'], unique=False)
 
     # Rejections and Health tables
@@ -96,39 +104,50 @@ def downgrade() -> None:
         op.drop_table('source_health')
         
     if 'internship_rejections' in tables:
-        op.drop_index(op.f('ix_internship_rejections_source'), table_name='internship_rejections')
-        op.drop_index(op.f('ix_internship_rejections_created_at'), table_name='internship_rejections')
+        rejections_indexes = [idx['name'] for idx in inspector.get_indexes('internship_rejections')]
+        if 'ix_internship_rejections_source' in rejections_indexes:
+            op.drop_index(op.f('ix_internship_rejections_source'), table_name='internship_rejections')
+        if 'ix_internship_rejections_created_at' in rejections_indexes:
+            op.drop_index(op.f('ix_internship_rejections_created_at'), table_name='internship_rejections')
         op.drop_table('internship_rejections')
         
     columns = [c['name'] for c in inspector.get_columns('internships')]
+    indexes = [idx['name'] for idx in inspector.get_indexes('internships')]
     
     if 'consecutive_failures' in columns:
-        op.drop_index(op.f('ix_internships_consecutive_failures'), table_name='internships')
+        if 'ix_internships_consecutive_failures' in indexes:
+            op.drop_index(op.f('ix_internships_consecutive_failures'), table_name='internships')
         op.drop_column('internships', 'consecutive_failures')
         
     if 'deactivated_at' in columns:
-        op.drop_index(op.f('ix_internships_deactivated_at'), table_name='internships')
+        if 'ix_internships_deactivated_at' in indexes:
+            op.drop_index(op.f('ix_internships_deactivated_at'), table_name='internships')
         op.drop_column('internships', 'deactivated_at')
         
     if 'last_seen' in columns:
-        op.drop_index(op.f('ix_internships_last_seen'), table_name='internships')
+        if 'ix_internships_last_seen' in indexes:
+            op.drop_index(op.f('ix_internships_last_seen'), table_name='internships')
         op.drop_column('internships', 'last_seen')
         
     if 'inactive_reason' in columns:
         op.drop_column('internships', 'inactive_reason')
         
     if 'is_active' in columns:
-        op.drop_index(op.f('ix_internships_is_active'), table_name='internships')
+        if 'ix_internships_is_active' in indexes:
+            op.drop_index(op.f('ix_internships_is_active'), table_name='internships')
         op.drop_column('internships', 'is_active')
         
     if 'role_category' in columns:
-        op.drop_index(op.f('ix_internships_role_category'), table_name='internships')
+        if 'ix_internships_role_category' in indexes:
+            op.drop_index(op.f('ix_internships_role_category'), table_name='internships')
         op.drop_column('internships', 'role_category')
         
     if 'relevance_tier' in columns:
-        op.drop_index(op.f('ix_internships_relevance_tier'), table_name='internships')
+        if 'ix_internships_relevance_tier' in indexes:
+            op.drop_index(op.f('ix_internships_relevance_tier'), table_name='internships')
         op.drop_column('internships', 'relevance_tier')
         
     if 'relevance_score' in columns:
-        op.drop_index(op.f('ix_internships_relevance_score'), table_name='internships')
+        if 'ix_internships_relevance_score' in indexes:
+            op.drop_index(op.f('ix_internships_relevance_score'), table_name='internships')
         op.drop_column('internships', 'relevance_score')

@@ -72,14 +72,12 @@ class BaseScraper(ABC):
         logger.info(f"[{self.source_name}] Initiating live scraping process...")
         raw_results = []
         
-        # Load existing links from DB to calculate duplicate saturation
+        # Use on-demand DBExistenceChecker instead of loading all links from DB
         try:
-            from python_scraper.database.db import get_db_session, Internship
-            db_session = get_db_session()
-            self.existing_links = {r[0] for r in db_session.query(Internship.apply_link).all()}
-            db_session.close()
+            from python_scraper.database.db import DBExistenceChecker
+            self.existing_links = DBExistenceChecker()
         except Exception as e:
-            logger.warning(f"[{self.source_name}] Failed to load existing links from DB: {e}")
+            logger.warning(f"[{self.source_name}] Failed to initialize DBExistenceChecker: {e}")
             self.existing_links = set()
         
         # Reset metrics on each scraping run
