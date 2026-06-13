@@ -11,18 +11,34 @@ logger = logging.getLogger("python_scraper.database")
 
 def create_database_if_not_exists():
     """
-    Connects to the local MySQL server and creates the database if it doesn't exist.
+    Connects to the default PostgreSQL database (usually 'postgres') and creates target database if it doesn't exist.
+    Supports dynamic bypass if user does not have superuser/creation permissions.
     """
     try:
         # Split URL to get server base connection and database name
-        # "mysql+pymysql://root:@localhost/internship" -> "mysql+pymysql://root:@localhost" and "internship"
         base_url, db_name = DATABASE_URL.rsplit('/', 1)
-        temp_engine = create_engine(base_url, pool_pre_ping=True)
+        if '?' in db_name:
+            db_name = db_name.split('?')[0]
+        
+        # Connect to 'postgres' default database first
+        parsed_url = DATABASE_URL.rsplit('/', 1)[0] + '/postgres'
+        if '?' in DATABASE_URL:
+            params = DATABASE_URL.split('?', 1)[1]
+            parsed_url = parsed_url.split('?')[0] + '?' + params
+
+        # Using autocommit connection for database creation queries
+        temp_engine = create_engine(parsed_url, pool_pre_ping=True)
         with temp_engine.connect() as conn:
+            conn.connection.connection.autocommit = True
             from sqlalchemy import text
-            conn.execute(text(f"CREATE DATABASE IF NOT EXISTS {db_name}"))
+            result = conn.execute(text(f"SELECT 1 FROM pg_database WHERE datname='{db_name}'"))
+            exists = result.scalar() is not None
+            if not exists:
+                conn.execute(text(f"CREATE DATABASE {db_name}"))
+                logger.info(f"Database validation: Database '{db_name}' was successfully created.")
+            else:
+                logger.info(f"Database validation: Database '{db_name}' exists.")
         temp_engine.dispose()
-        logger.info(f"Database validation: Database '{db_name}' exists or was successfully verified/created.")
     except Exception as e:
         logger.warning(f"Database validation: Auto-creation check failed (continuing to connect): {e}")
 
@@ -67,17 +83,16 @@ class DBExistenceChecker:
 
 def test_connection() -> bool:
     """
-    Tests the database connection to the local MySQL database 'internship'.
-    Ensures the local MySQL installation is accessible.
+    Tests the database connection to the PostgreSQL database.
     """
     try:
         from sqlalchemy import text
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
-        logger.info("Successfully connected to MySQL database: internship")
+        logger.info("Successfully connected to PostgreSQL database")
         return True
     except Exception as e:
-        logger.error("Could not connect to MySQL at localhost:3306", exc_info=True)
+        logger.error("Could not connect to PostgreSQL database", exc_info=True)
         return False
 
 def init_db():
@@ -89,7 +104,7 @@ def init_db():
     try:
         logger.info("Initiating database startup sequence...")
         if not test_connection():
-            raise ConnectionError("Could not connect to MySQL at localhost:3306")
+            raise ConnectionError("Could not connect to PostgreSQL database")
             
         Base.metadata.create_all(engine)
         logger.info("Tables created or verified via SQLAlchemy Metadata.")
@@ -195,12 +210,14 @@ def save_internships(internship_dicts, stats_dict=None):
         
         from sqlalchemy import or_, and_
         company_conditions = []
+        common_words = {'the', 'and', 'company', 'solutions', 'technologies', 'services', 'systems', 'global', 'group', 'digital', 'software', 'india', 'consulting', 'lab', 'labs', 'inc', 'corp', 'llc'}
         for comp in batch_companies:
             if not comp:
                 continue
             company_conditions.append(Internship.company_name == comp)
             first_word = comp.split()[0] if comp.strip() else ""
-            if len(first_word) > 2:
+            # Exclude common corporate suffixes or small articles to avoid full table scans
+            if len(first_word) > 3 and first_word.lower() not in common_words:
                 company_conditions.append(Internship.company_name.like(f"{first_word}%"))
         
         query_filter = Internship.apply_link.in_(batch_links)

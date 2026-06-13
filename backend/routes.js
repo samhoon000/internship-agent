@@ -151,7 +151,7 @@ function buildInternshipsQuery(query) {
     category = 'Data/AI'
   } = query;
 
-  let sql = `FROM internships WHERE is_active = 1 AND relevance_score >= 40`;
+  let sql = `FROM internships WHERE is_active = TRUE AND relevance_score >= 40`;
   let params = [];
 
   if (category) {
@@ -159,9 +159,9 @@ function buildInternshipsQuery(query) {
     params.push(category);
   }
 
-  // Search filter
+  // Search filter (PostgreSQL Full Text Search using plainto_tsquery)
   if (search.trim()) {
-    sql += ` AND MATCH(company_name, role, skills, description) AGAINST(? IN NATURAL LANGUAGE MODE)`;
+    sql += ` AND to_tsvector('english', coalesce(company_name, '') || ' ' || coalesce(role, '') || ' ' || coalesce(skills, '') || ' ' || coalesce(description, '')) @@ plainto_tsquery('english', ?)`;
     params.push(search.trim());
   }
 
@@ -171,11 +171,11 @@ function buildInternshipsQuery(query) {
     const locClauses = [];
     selectedLocations.forEach(loc => {
       if (loc === 'remote') {
-        locClauses.push(`(remote = 1 OR location LIKE '%remote%' OR location LIKE '%work from home%')`);
+        locClauses.push(`(remote = TRUE OR location ILIKE '%remote%' OR location ILIKE '%work from home%')`);
       } else if (loc === 'hybrid') {
-        locClauses.push(`location LIKE '%hybrid%'`);
+        locClauses.push(`location ILIKE '%hybrid%'`);
       } else {
-        locClauses.push(`location LIKE ?`);
+        locClauses.push(`location ILIKE ?`);
         params.push(`%${loc}%`);
       }
     });
@@ -187,25 +187,25 @@ function buildInternshipsQuery(query) {
   // Remote filter
   if (remote) {
     if (remote === 'remote') {
-      sql += ` AND (remote = 1 OR location LIKE '%remote%' OR location LIKE '%work from home%')`;
+      sql += ` AND (remote = TRUE OR location ILIKE '%remote%' OR location ILIKE '%work from home%')`;
     } else if (remote === 'onsite') {
-      sql += ` AND (remote = 0 AND (location IS NULL OR (location NOT LIKE '%hybrid%' AND location NOT LIKE '%remote%' AND location NOT LIKE '%work from home%')))`;
+      sql += ` AND (remote = FALSE AND (location IS NULL OR (location NOT ILIKE '%hybrid%' AND location NOT ILIKE '%remote%' AND location NOT ILIKE '%work from home%')))`;
     } else if (remote === 'hybrid') {
-      sql += ` AND location LIKE '%hybrid%'`;
+      sql += ` AND location ILIKE '%hybrid%'`;
     }
   }
 
-  // Duration filter
+  // Duration filter (Postgres Regex matching operator ~)
   if (duration) {
     const selectedDurations = duration.split(',').map(s => s.trim().toLowerCase());
     const durClauses = [];
     selectedDurations.forEach(d => {
       if (d === '6+') {
-        durClauses.push(`duration REGEXP '[6-9]|[0-9]{2,}'`);
+        durClauses.push(`duration ~ '[6-9]|[0-9]{2,}'`);
       } else {
         const num = parseInt(d, 10);
         if (!isNaN(num)) {
-          durClauses.push(`duration LIKE ?`);
+          durClauses.push(`duration ILIKE ?`);
           params.push(`%${num}%`);
         }
       }
@@ -215,13 +215,12 @@ function buildInternshipsQuery(query) {
     }
   }
 
-  // Skills filter (matches ALL selected skills exactly)
+  // Skills filter (Postgres replacement for FIND_IN_SET)
   if (skills) {
     const selectedSkills = skills.split(',').map(s => s.trim().toLowerCase());
     selectedSkills.forEach(skill => {
-      // Remove spaces for exact token comparison in comma-separated list
       const cleanSkill = skill.replace(/\s+/g, '');
-      sql += ` AND FIND_IN_SET(?, REPLACE(LOWER(skills), ' ', '')) > 0`;
+      sql += ` AND ? = ANY(string_to_array(replace(lower(skills), ' ', ''), ','))`;
       params.push(cleanSkill);
     });
   }
@@ -257,7 +256,7 @@ function buildInternshipsQuery(query) {
   sql += ` AND legitimacy_score >= ?`;
   params.push(minLegit);
 
-  // Date Posted filter
+  // Date Posted filter (Postgres Interval)
   if (datePosted) {
     let days = 0;
     if (datePosted === 'today') days = 1;
@@ -266,7 +265,7 @@ function buildInternshipsQuery(query) {
     else if (datePosted === '30days') days = 30;
 
     if (days > 0) {
-      sql += ` AND (posted_at >= NOW() - INTERVAL ? DAY OR (posted_at IS NULL AND created_at >= NOW() - INTERVAL ? DAY))`;
+      sql += ` AND (posted_at >= NOW() - (? * INTERVAL '1 day') OR (posted_at IS NULL AND created_at >= NOW() - (? * INTERVAL '1 day')))`;
       params.push(days, days);
     }
   }
@@ -322,7 +321,7 @@ router.get('/internships', async (req, res) => {
     const hasSearch = req.query.search && req.query.search.trim();
 
     if (hasSearch) {
-      selectColumns.push(`MATCH(company_name, role, skills, description) AGAINST(? IN NATURAL LANGUAGE MODE) AS search_score`);
+      selectColumns.push(`ts_rank(to_tsvector('english', coalesce(company_name, '') || ' ' || coalesce(role, '') || ' ' || coalesce(skills, '') || ' ' || coalesce(description, '')), plainto_tsquery('english', ?)) AS search_score`);
       selectParams.push(req.query.search.trim());
     }
 
@@ -330,7 +329,7 @@ router.get('/internships', async (req, res) => {
 
     if (sort === 'legitimacy') {
       const querySql = `SELECT ${columnsStr} ${whereSql}`;
-      const [rows] = await pool.query(querySql, [...selectParams, ...whereParams]);
+      const { rows } = await pool.query(querySql, [...selectParams, ...whereParams]);
 
       const processed = rows.map(row => {
         const skills_list = row.skills ? row.skills.split(',').map(s => s.trim()).filter(Boolean) : [];
@@ -353,12 +352,13 @@ router.get('/internships', async (req, res) => {
     } else {
       const countSql = `SELECT COUNT(*) as total ${whereSql}`;
       const [[{ total }]] = await pool.query(countSql, whereParams);
+      const totalNum = parseInt(total, 10) || 0;
 
       let orderClause = '';
       if (sort === 'stipend') {
         orderClause = ` ORDER BY stipend_numeric DESC, COALESCE(posted_at, created_at) DESC`;
       } else if (sort === 'remote_first') {
-        orderClause = ` ORDER BY (CASE WHEN remote = 1 OR location LIKE '%remote%' OR location LIKE '%work from home%' THEN 1 ELSE 0 END) DESC, COALESCE(posted_at, created_at) DESC`;
+        orderClause = ` ORDER BY (CASE WHEN remote = TRUE OR location ILIKE '%remote%' OR location ILIKE '%work from home%' THEN 1 ELSE 0 END) DESC, COALESCE(posted_at, created_at) DESC`;
       } else if (sort === 'company') {
         orderClause = ` ORDER BY company_name ASC`;
       } else if (sort === 'recently_added') {
@@ -371,7 +371,7 @@ router.get('/internships', async (req, res) => {
         }
       }
 
-      const querySql = `SELECT ${columnsStr} ${whereSql}${orderClause} LIMIT ? OFFSET ?`;
+      const querySql = `SELECT ${columnsStr} ${whereSql}${orderClause} LIMIT ?::integer OFFSET ?::integer`;
       const queryParams = [...selectParams, ...whereParams, limitNum, offset];
 
       const [rows] = await pool.query(querySql, queryParams);
@@ -384,10 +384,10 @@ router.get('/internships', async (req, res) => {
 
       return res.json({
         internships: paginated,
-        total,
+        total: totalNum,
         page: pageNum,
         limit: limitNum,
-        totalPages: Math.ceil(total / limitNum)
+        totalPages: Math.ceil(totalNum / limitNum)
       });
     }
   } catch (error) {
@@ -412,7 +412,7 @@ router.get('/internships/:applyLink', async (req, res) => {
       // Ignored
     }
 
-    const [rows] = await pool.query('SELECT * FROM internships WHERE apply_link = ? AND is_active = 1', [decodedLink]);
+    const [rows] = await pool.query('SELECT * FROM internships WHERE apply_link = ? AND is_active = TRUE', [decodedLink]);
     
     if (rows.length === 0) {
       return res.status(404).json({ error: 'Internship not found' });
@@ -454,14 +454,14 @@ router.get('/internships/:applyLink', async (req, res) => {
              confidence_score, freshness_score, confidence, confidence_tier,
              relevance_score, posted_at, created_at
       FROM internships
-      WHERE is_active = 1 AND apply_link != ? AND relevance_score >= 40
+      WHERE is_active = TRUE AND apply_link != ? AND relevance_score >= 40
         AND role_category = ?
-        AND (role LIKE ? OR source = ?
+        AND (role ILIKE ? OR source = ?
     `;
     const similarParams = [decodedLink, row.role_category || 'Data/AI', firstRoleWord, row.source];
 
     if (skillsMatchPatterns.length > 0) {
-      const skillsClauses = skillsMatchPatterns.map(() => 'skills LIKE ?').join(' OR ');
+      const skillsClauses = skillsMatchPatterns.map(() => 'skills ILIKE ?').join(' OR ');
       similarSql += ` OR ${skillsClauses}`;
       similarParams.push(...skillsMatchPatterns);
     }
@@ -504,7 +504,7 @@ router.get('/filters', async (req, res) => {
     }
 
     const [rows] = await pool.query(
-      'SELECT location, source, skills FROM internships WHERE is_active = 1 AND relevance_score >= 40 AND role_category = ?',
+      'SELECT location, source, skills FROM internships WHERE is_active = TRUE AND relevance_score >= 40 AND role_category = ?',
       [category]
     );
     
@@ -582,7 +582,7 @@ router.get('/stats', async (req, res) => {
     }
 
     const [rows] = await pool.query(
-      'SELECT company_name, role, role_category, stipend, stipend_numeric, remote, location, source, skills, legitimacy_score, posted_at, created_at FROM internships WHERE is_active = 1'
+      'SELECT company_name, role, role_category, stipend, stipend_numeric, remote, location, source, skills, legitimacy_score, posted_at, created_at FROM internships WHERE is_active = TRUE'
     );
     
     const totalCount = rows.length;
@@ -591,16 +591,17 @@ router.get('/stats', async (req, res) => {
       ? rows.reduce((sum, i) => sum + i.legitimacy_score, 0) / totalCount 
       : 0;
     
-    const [[{ dbTotalCount }]] = await pool.query('SELECT COUNT(*) as dbTotalCount FROM internships');
+    const [[{ dbtotalcount }]] = await pool.query('SELECT COUNT(*) as dbTotalCount FROM internships');
+    const dbTotalCount = Number(dbtotalcount);
     
     // Query rejection stats from database
     const [[rejectionRow]] = await pool.query(
       `SELECT 
-         COUNT(*) as totalRejected,
-         SUM(CASE WHEN reasons LIKE '%relevance%' OR reasons LIKE '%role%' OR reasons LIKE '%exclude%' THEN 1 ELSE 0 END) as rejectedNonTech 
+         COUNT(*) as "totalRejected",
+         SUM(CASE WHEN reasons ILIKE '%relevance%' OR reasons ILIKE '%role%' OR reasons ILIKE '%exclude%' THEN 1 ELSE 0 END) as "rejectedNonTech" 
        FROM internship_rejections`
     );
-    const totalRejected = rejectionRow ? (rejectionRow.totalRejected || 0) : 0;
+    const totalRejected = rejectionRow ? (Number(rejectionRow.totalRejected) || 0) : 0;
     const rejectedNonTech = rejectionRow ? (Number(rejectionRow.rejectedNonTech) || 0) : 0;
 
     const aiDataCount = rows.filter(i => i.role_category === 'Data/AI').length;
@@ -842,7 +843,7 @@ router.get('/live', (req, res) => {
 
 router.get('/ready', async (req, res) => {
   try {
-    const connection = await pool.getConnection();
+    const connection = await pool.connect();
     connection.release();
     res.json({ status: 'UP', service: 'readiness', timestamp: new Date().toISOString() });
   } catch (error) {
@@ -864,10 +865,10 @@ router.get('/health', async (req, res) => {
     alerts: []
   };
 
-  // 1. Check MySQL Database Latency & Connection
+  // 1. Check PostgreSQL Database Latency & Connection
   const dbStart = Date.now();
   try {
-    const connection = await pool.getConnection();
+    const connection = await pool.connect();
     await connection.query('SELECT 1');
     connection.release();
     healthData.services.db.status = 'UP';
@@ -876,7 +877,7 @@ router.get('/health', async (req, res) => {
     healthData.status = 'UNHEALTHY';
     healthData.services.db.status = 'DOWN';
     healthData.services.db.error = dbErr.message;
-    healthData.alerts.push({ level: 'CRITICAL', service: 'MySQL', message: `Database connection failed: ${dbErr.message}` });
+    healthData.alerts.push({ level: 'CRITICAL', service: 'PostgreSQL', message: `Database connection failed: ${dbErr.message}` });
   }
 
   // 2. Check Redis Status (fail fast, no hang)

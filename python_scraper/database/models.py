@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, String, Boolean, Integer, DateTime, Index, text
+from sqlalchemy import Column, String, Boolean, Integer, BigInteger, DateTime, Index, text
 from sqlalchemy.ext.declarative import declarative_base
 
 Base = declarative_base()
@@ -15,9 +15,10 @@ class Internship(Base):
         Index('ix_internships_active_source', 'is_active', 'source'),
     )
     
-    # MySQL requires explicit VARCHAR lengths on all String columns.
-    # apply_link serves as the unique primary key matching the user's exact schema.
-    apply_link = Column(String(500), primary_key=True, nullable=False)
+    # id serves as the primary key matching the optimized schema
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    # apply_link serves as the unique alternate key matching search logic
+    apply_link = Column(String(500), unique=True, nullable=False)
     
     company_name = Column(String(255), nullable=False)
     role = Column(String(255), nullable=False)
@@ -29,26 +30,27 @@ class Internship(Base):
     skills = Column(String(500), nullable=True)  # Stored as comma-separated text
     source = Column(String(100), nullable=False, index=True)
     legitimacy_score = Column(Integer, default=50, nullable=False, index=True)
-    confidence_score = Column(Integer, default=50, nullable=False, index=True)
+    confidence_score = Column(Integer, default=50, nullable=False)
     stipend_numeric = Column(Integer, default=0, nullable=False, index=True)
     posted_at = Column(DateTime, nullable=True, index=True)
-    freshness_score = Column(Integer, default=0, nullable=False, index=True)
+    freshness_score = Column(Integer, default=0, nullable=False)
     confidence = Column(String(50), default="HIGH", nullable=False)
     confidence_tier = Column(String(50), default="HIGH_CONFIDENCE", nullable=False)
-    is_active = Column(Boolean, default=True, nullable=False, index=True)
+    is_active = Column(Boolean, default=True, nullable=False)
     inactive_reason = Column(String(255), nullable=True)
-    last_seen = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
-    deactivated_at = Column(DateTime, nullable=True, index=True)
+    last_seen = Column(DateTime, default=datetime.utcnow, nullable=False)
+    deactivated_at = Column(DateTime, nullable=True)
     consecutive_failures = Column(Integer, default=0, nullable=False)
     description = Column(String(5000), nullable=True)  # Stored text description
     relevance_score = Column(Integer, default=0, nullable=False, index=True)
     relevance_tier = Column(String(50), default="IRRELEVANT", nullable=False)
-    role_category = Column(String(50), default="Other", nullable=False, index=True)
+    role_category = Column(String(50), default="Other", nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
     def to_dict(self):
         """Helper to convert model instance to dictionary."""
         return {
+            "id": self.id,
             "company_name": self.company_name,
             "role": self.role,
             "stipend": self.stipend,

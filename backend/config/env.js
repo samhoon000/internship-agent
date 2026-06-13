@@ -15,7 +15,12 @@ const REQUIRED_ENV_VARS = [
 export function validateEnv() {
   const missing = [];
   
-  REQUIRED_ENV_VARS.forEach((key) => {
+  const hasDatabaseUrl = process.env.DATABASE_URL && process.env.DATABASE_URL.trim() !== '';
+  const requiredVars = hasDatabaseUrl
+    ? REQUIRED_ENV_VARS.filter((key) => !key.startsWith('DB_'))
+    : REQUIRED_ENV_VARS;
+  
+  requiredVars.forEach((key) => {
     if (!process.env[key] || process.env[key].trim() === '') {
       missing.push(key);
     }

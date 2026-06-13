@@ -1,5 +1,5 @@
 sqlalchemy
-pymysql
+psycopg2-binary
 pandas
 numpy
 requests

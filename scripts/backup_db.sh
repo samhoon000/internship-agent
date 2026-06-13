@@ -1,6 +1,6 @@
 #!/bin/bash
 # ==========================================
-# Automated MySQL Database Backup Script
+# Automated PostgreSQL Database Backup Script
 # Retention Policy: 7 days
 # ==========================================
 
@@ -9,14 +9,14 @@ set -e
 
 # Configuration
 DB_HOST="${DB_HOST:-localhost}"
-DB_USER="${DB_USER:-root}"
-DB_PASSWORD="${DB_PASSWORD:-}"
+DB_USER="${DB_USER:-postgres}"
+DB_PASSWORD="${DB_PASSWORD:-postgres}"
 DB_NAME="${DB_NAME:-internship}"
 BACKUP_DIR="${BACKUP_DIR:-./backups}"
 RETENTION_DAYS=7
 
 echo "=========================================="
-echo "Starting MySQL Database Backup"
+echo "Starting PostgreSQL Database Backup"
 echo "Timestamp: $(date '+%Y-%m-%d %H:%M:%S')"
 echo "Database: ${DB_NAME} on ${DB_HOST}"
 echo "=========================================="
@@ -29,13 +29,9 @@ TIMESTAMP=$(date '+%Y-%m-%d_%H-%M-%S')
 BACKUP_FILE="${BACKUP_DIR}/backup_${TIMESTAMP}.sql"
 GZIP_FILE="${BACKUP_FILE}.gz"
 
-# Run mysqldump
+# Run pg_dump
 echo "Dumping database..."
-if [ -z "${DB_PASSWORD}" ]; then
-  mysqldump -h "${DB_HOST}" -u "${DB_USER}" "${DB_NAME}" > "${BACKUP_FILE}"
-else
-  mysqldump -h "${DB_HOST}" -u "${DB_USER}" -p"${DB_PASSWORD}" "${DB_NAME}" > "${BACKUP_FILE}"
-fi
+PGPASSWORD="${DB_PASSWORD}" pg_dump -h "${DB_HOST}" -U "${DB_USER}" "${DB_NAME}" > "${BACKUP_FILE}"
 
 # Compress the backup file
 echo "Compressing backup file..."

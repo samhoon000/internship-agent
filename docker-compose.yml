@@ -2,18 +2,19 @@ version: '3.8'
 
 services:
   db:
-    image: mysql:8.0
+    image: postgres:15-alpine
     container_name: internship_db
     restart: always
     environment:
-      MYSQL_DATABASE: internship
-      MYSQL_ALLOW_EMPTY_PASSWORD: 'yes'
+      POSTGRES_DB: internship
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
     ports:
-      - "3306:3306"
+      - "5432:5432"
     volumes:
-      - mysql_data:/var/lib/mysql
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d internship"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -41,10 +42,7 @@ services:
     ports:
       - "5000:5000"
     environment:
-      - DB_HOST=db
-      - DB_USER=root
-      - DB_PASSWORD=
-      - DB_NAME=internship
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/internship
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - PORT=5000
@@ -69,12 +67,13 @@ services:
     restart: always
     environment:
       - DB_HOST=db
-      - DB_USER=root
-      - DB_PASSWORD=
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
       - DB_NAME=internship
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - DATABASE_URL=mysql+pymysql://root:@db/internship
+      - DATABASE_URL=postgresql+psycopg2://postgres:postgres@db:5432/internship
       - PLAYWRIGHT_HEADLESS=True
     depends_on:
       db:
@@ -83,17 +82,17 @@ services:
         condition: service_healthy
 
   db_backup:
-    image: mysql:8.0
+    image: postgres:15-alpine
     container_name: internship_db_backup
     restart: always
     environment:
       - DB_HOST=db
-      - DB_USER=root
-      - DB_PASSWORD=
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
       - DB_NAME=internship
       - BACKUP_DIR=/backups
     volumes:
-      - mysql_backups:/backups
+      - postgres_backups:/backups
     entrypoint: >
       /bin/sh -c "
       echo 'Starting backup service cron loop...';
@@ -101,7 +100,7 @@ services:
         echo 'Creating database backup...';
         mkdir -p /backups;
         FILENAME='/backups/backup_$$(date +%Y-%m-%d_%H-%M-%S).sql';
-        mysqldump -h $$DB_HOST -u $$DB_USER $$DB_NAME > $$FILENAME;
+        PGPASSWORD=$$DB_PASSWORD pg_dump -h $$DB_HOST -U $$DB_USER $$DB_NAME > $$FILENAME;
         gzip -f $$FILENAME;
         echo 'Backup created successfully.';
         echo 'Enforcing retention policy (older than 7 days)...';
@@ -132,6 +131,6 @@ services:
       retries: 3
 
 volumes:
-  mysql_data:
+  postgres_data:
   redis_data:
-  mysql_backups:
+  postgres_backups:

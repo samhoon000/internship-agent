@@ -135,8 +135,9 @@ if not DATABASE_URL:
     sys.exit(1)
 
 parsed_db = urlparse(DATABASE_URL)
-if parsed_db.scheme != "mysql+pymysql" and not DATABASE_URL.startswith("mysql+pymysql://"):
-    print(f"\n❌ FATAL CONFIGURATION ERROR:\nDATABASE_URL must use the mysql+pymysql scheme. Got: '{DATABASE_URL}'\n", file=sys.stderr)
+allowed_schemes = {"postgresql", "postgresql+psycopg2", "postgres", "mysql+pymysql"}
+if parsed_db.scheme not in allowed_schemes and not any(DATABASE_URL.startswith(f"{s}://") for s in allowed_schemes):
+    print(f"\n❌ FATAL CONFIGURATION ERROR:\nDATABASE_URL must use a supported PostgreSQL/MySQL scheme. Got: '{DATABASE_URL}'\n", file=sys.stderr)
     sys.exit(1)
 
 
